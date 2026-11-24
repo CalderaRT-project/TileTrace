@@ -4,7 +4,7 @@
 
 ## 安装与快速开始
 
-在 VS Code 扩展面板的菜单中选择 **Install from VSIX…**，安装 `tiletrace-0.1.12.vsix`。从源码构建方法见下方“从源码开发与打包”。运行时需要 Python 3.10+，无需安装 Triton、NumPy 或使用 GPU。
+在 VS Code 扩展面板的菜单中选择 **Install from VSIX…**，安装 `tiletrace-0.1.4.vsix`。从源码构建方法见下方“从源码开发与打包”。运行时需要 Python 3.10+，无需安装 Triton、NumPy 或使用 GPU。
 
 在工作区中打开带 `@triton.jit` 的已保存 `.py` 文件，再点击编辑器右上角独立的 **TileTrace 矩阵图标**，或运行命令 **TileTrace: 打开变换可视化**，手动打开右侧中文面板。打开、切换或拆分源文件均不会自动创建或调出面板；面板已打开时仍跟随当前源码更新，关闭后需要再次手动打开。工具栏按钮和面板标签使用深浅主题图标，与 VS Code 的拆分编辑器按钮分开。支持常见 `import triton as ...`、`from triton import jit as ...` 装饰器别名；复杂导入形式可能需要改用常见形式。切到普通 Python 文件时清除已显示的分析，面板获得焦点时保留对应源码编辑器。
 
@@ -46,7 +46,7 @@ npm --prefix extension test
 npm --prefix extension run package
 ```
 
-`package` 会编译 TypeScript，将根目录 `tiletrace/*.py` 复制到生成的 `extension/python/tiletrace/`，输出 `dist/tiletrace-0.1.12.vsix`。请从完整仓库构建。
+`package` 会编译 TypeScript，将根目录 `tiletrace/*.py` 复制到生成的 `extension/python/tiletrace/`，输出 `dist/tiletrace-0.1.4.vsix`。请从完整仓库构建。
 
 开发前先在 `extension/` 安装开发依赖。扩展宿主调试配置由开发者保存在本机 `.vscode/` 中，该目录不纳入版本控制。扩展开发宿主中打开 `examples/` 的 Triton 文件。通过 VS Code 扩展面板的 **Install from VSIX…** 手动安装生成的包。
 

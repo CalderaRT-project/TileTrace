@@ -4,7 +4,7 @@ TileTrace 是 VS Code 的 Triton 张量变换可视化扩展。打开 Triton 脚
 
 分析器不执行脚本、不导入 Triton、不启动 kernel；使用 Python 3.10+，无需 GPU。采用 [MIT 许可证](LICENSE)。
 
-> 当前版本为 0.1.12，支持本地 VSIX 安装。[更新日志](docs/CHANGELOG.md)
+> 当前版本为 0.1.4，支持本地 VSIX 安装。[更新日志](docs/CHANGELOG.md)
 
 ## 当前功能
 
@@ -25,7 +25,7 @@ npm --prefix extension ci
 npm --prefix extension run package
 ```
 
-Windows PowerShell 也可以运行 `.\scripts\setup.ps1` 生成 VSIX。构建完成后，在 VS Code 扩展面板的菜单中选择 **Install from VSIX…**，安装 `dist/tiletrace-0.1.12.vsix`。
+Windows PowerShell 也可以运行 `.\scripts\setup.ps1` 生成 VSIX。构建完成后，在 VS Code 扩展面板的菜单中选择 **Install from VSIX…**，安装 `dist/tiletrace-0.1.4.vsix`。
 
 安装后，在受信任的工作区打开包含 `@triton.jit` kernel 的已保存 `.py` 文件。点击编辑器右上角的 **TileTrace 矩阵图标**，或运行命令 **TileTrace: 打开变换可视化**。选中源码表达式可查看输入和输出形状，点击输出坐标可查看直接输入来源。
 

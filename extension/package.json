@@ -2,7 +2,7 @@
   "name": "tiletrace",
   "displayName": "TileTrace",
   "description": "Explain Triton tensor shapes and coordinate provenance statically, without executing kernels.",
-  "version": "0.1.12",
+  "version": "0.1.4",
   "publisher": "tiletrace",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/luicarus/TileTrace.git" },
