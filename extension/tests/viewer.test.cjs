@@ -78,7 +78,7 @@ test('ResizeObserver observes current content only and handles loading without a
  let available=600,notify,observed=[];const nodes=[node('in',[8]),node('out',[8],['in'])];
  const {dom,send}=setup(nodes,window=>{
   window.ResizeObserver=class {constructor(callback){notify=callback;}observe(element){observed.push(element);}disconnect(){observed=[];}};
-  window.HTMLElement.prototype.getBoundingClientRect=function(){return {width:this.id==='app'?available:this.classList.contains('flow-inputs')||this.classList.contains('flow-output')?200:this.classList.contains('flow-arrow')?64:0,height:100,x:0,y:0};};
+  window.HTMLElement.prototype.getBoundingClientRect=function(){return {width:this.classList.contains('flow')?available:this.classList.contains('flow-inputs')||this.classList.contains('flow-output')?200:0,height:100,x:0,y:0};};
  });
  const document=dom.window.document;assert.equal(document.querySelector('.flow').dataset.layout,'horizontal');assert.equal(observed.length,3);
  const oldFlow=document.querySelector('.flow');const state={analysis:{nodes,kernels:['k'],kernel:'k',diagnostics:[],missing_parameters:[]},selected:'out',stale:false,file:'a.py',version:1,parameters:{},input_shapes:{},program_ids:[]};
@@ -91,7 +91,7 @@ test('ResizeObserver observes current content only and handles loading without a
 test('flow fits actual content widths and resizing preserves selection and DOM identity',()=>{
  const {dom,messages}=setup([node('in',[16,1]),node('out',[16,1],['in'])]);const document=dom.window.document;
  let available=510,inputWidth=180,outputWidth=180;
- dom.window.HTMLElement.prototype.getBoundingClientRect=function(){return {width:this.id==='app'?available:this.classList.contains('flow-inputs')?inputWidth:this.classList.contains('flow-output')?outputWidth:this.classList.contains('flow-arrow')?64:0,height:100,x:0,y:0};};
+ dom.window.HTMLElement.prototype.getBoundingClientRect=function(){return {width:this.classList.contains('flow')?available:this.classList.contains('flow-inputs')?inputWidth:this.classList.contains('flow-output')?outputWidth:0,height:100,x:0,y:0};};
  const cell=document.querySelector('[data-output="true"][data-index="[15,0]"]');cell.click();const request=messages.at(-1);const selected=document.querySelector('[data-output="true"][data-index="[15,0]"]');
  const resize=()=>dom.window.dispatchEvent(new dom.window.Event('resize'));
  resize();assert.equal(document.querySelector('.flow').dataset.layout,'horizontal');
@@ -102,13 +102,19 @@ test('flow fits actual content widths and resizing preserves selection and DOM i
  assert.ok(selected.classList.contains('selected-cell'));assert.equal(messages.at(-1),request);
 });
 
-test('flow keeps its operator and accessible meaning while CSS controls arrow direction',()=>{
- const {dom}=setup([node('in',[8]),node('out',[2,4],['in'])]);const arrow=dom.window.document.querySelector('.flow-arrow');
- assert.ok(arrow.querySelector('.flow-direction'));
- assert.equal(arrow.querySelector('.flow-operator').textContent,'reshape');
- assert.equal(arrow.getAttribute('role'),'img');
- assert.match(arrow.getAttribute('aria-label'),/输入.*reshape.*输出/);
- assert.equal(arrow.querySelector('.flow-direction').getAttribute('aria-hidden'),'true');
+test('flow puts the selectable output first and the coordinate response beside it',()=>{
+ const input=node('in',[8]),output=node('out',[2,4],['in']);
+ const {dom,messages,send}=setup([input,output]);const document=dom.window.document;
+ const flow=document.querySelector('.flow');
+ assert.ok(flow.firstElementChild.classList.contains('flow-output'));
+ assert.match(flow.getAttribute('aria-label'),/输入.*reshape.*输出/);
+ assert.equal(document.querySelector('.operation-meta .operator').textContent,'reshape');
+ const cell=flow.querySelector('[data-output="true"][data-index="[1,2]"]');
+ assert.ok(cell.classList.contains('matrix-cell'));assert.match(cell.getAttribute('aria-label'),/\[1, 2\]/);
+ cell.click();
+ send(inspectionResponse(messages.at(-1),output,{status:'exact',output_index:[1,2],origins:[{node_id:'in',indices:[[6]],total:1,truncated:false}]}));
+ assert.equal(document.querySelector('[data-output="true"][data-index="[1,2]"]').getAttribute('aria-pressed'),'true');
+ assert.match(document.querySelector('.flow-inputs .mapping').textContent,/输出 \[1, 2\].*in.*\[6\]/);
 });
 
 test('tensor cards keep one metadata line and move directions and counts to tooltips',()=>{
@@ -163,6 +169,7 @@ test('origin text abbreviates returned coordinates without inventing an unenumer
  send(inspectionResponse(messages.at(-1),node('out',[1],['in']),{status:'exact',output_index:[0],origins:[{node_id:'in',indices:Array.from({length:16},(_,i)=>[i]),total:1000000,truncated:true}]}));
  const text=document.querySelector('.coordinates').textContent;assert.equal(text,'[0] · [1] · [2] · … · [13] · [14] · [15]');assert.doesNotMatch(text,/999999/);
  assert.match(document.querySelector('.mapping').textContent,/来源枚举已截断/);assert.match(document.querySelector('.mapping').textContent,/返回坐标的首尾/);
+ assert.equal(document.querySelector('.origin-summary code').textContent,'[0] … [15]');
 });
 
 test('expanding and collapsing keeps page position and toggle focus',()=>{
@@ -234,8 +241,11 @@ test('FlashAttention shows both KV iterations and dot origins as a row and colum
  select(data.analysis.nodes.find(n=>n.name==='q').id);
  assert.match(dom.window.document.querySelector('[data-card-role="output"] .pill').title,/16 行 × 32 列/);
  select(data.node.id);
- const document=dom.window.document;const buttons=Array.from(document.querySelectorAll('.operation'));
- assert.ok(buttons.some(b=>/dot.*start_n=0/.test(b.textContent)));assert.ok(buttons.some(b=>/dot.*start_n=32/.test(b.textContent)));
+ const document=dom.window.document;const groups=Array.from(document.querySelectorAll('.step-group'));
+ for(const offset of [0,32]){
+  const group=groups.find(item=>item.querySelector('.step-group-label').textContent===`start_n=${offset}`);
+  assert.ok(group?.querySelector('button[aria-label*="dot"]'),`dot in start_n=${offset}`);
+ }
  assert.match(document.body.textContent,/矩阵乘法归约长度/);
  document.querySelector('[data-output="true"][data-index="[0,1]"]').click();
  send(inspectionResponse(messages.at(-1),data.node,data.inspection));
@@ -244,6 +254,56 @@ test('FlashAttention shows both KV iterations and dot origins as a row and colum
  assert.equal(document.querySelectorAll('[data-node="'+data.node.inputs[1]+'"].origin').length,6);
  assert.equal(data.inspection.origins[0].total,32);
  assert.equal(data.inspection.origins[1].total,32);
+ assert.deepEqual(Array.from(document.querySelectorAll('.origin-summary code'),item=>item.textContent),['[0, :]','[:, 1]']);
+});
+
+test('the compact step list follows a newly selected step without moving the page',()=>{
+ const nodes=Array.from({length:10},(_,index)=>node(`n${index}`,[2,4]));
+ const {dom,send}=setup(nodes,window=>{
+  Object.defineProperty(window.HTMLElement.prototype,'clientHeight',{get(){
+   return this.matches('.operation-list')&&this.closest('.step-navigation').dataset.expanded==='true'?60:0;
+  }});
+  window.HTMLElement.prototype.getBoundingClientRect=function(){
+   if(this.matches('.operation')){
+    const list=this.closest('.operation-list');
+    const top=100+Number(this.dataset.node.slice(1))*20-list.scrollTop;
+    return {top,bottom:top+20,width:100};
+   }
+   return {top:100,bottom:160,width:this.matches('.flow')?500:100};
+  };
+ });
+ const document=dom.window.document;const scroll=scrollModel(dom);scroll.set(0,320);
+ assert.equal(document.querySelector('.steps-toggle').getAttribute('aria-expanded'),'false');
+ document.querySelector('.steps-toggle').click();
+ assert.equal(document.querySelector('.operation-list').scrollTop,140);
+ document.querySelector('.operation-list').scrollTop=0;
+ const state={analysis:{nodes,kernels:['k'],kernel:'k',diagnostics:[],missing_parameters:[]},selected:'n7',stale:false,file:'a.py',version:1};
+ send({type:'state',state});
+ assert.equal(document.querySelector('.steps-toggle').getAttribute('aria-expanded'),'true');
+ assert.equal(document.querySelector('.operation-list').scrollTop,100);
+ document.querySelector('.operation-list').scrollTop=40;
+ send({type:'state',state});
+ assert.equal(document.querySelector('.operation-list').scrollTop,40);
+ assert.deepEqual(scroll.position(),[0,320]);
+});
+
+test('the header uses the file name and keeps actionable diagnostics above the workbench',()=>{
+ const out=node('out',[2,4]);const {dom,send}=setup([out]);const document=dom.window.document;
+ const file='C:\\project\\kernel.py';
+ send({type:'state',state:{file,selected:'out',stale:false,analysis:{nodes:[out],kernels:['k'],kernel:'k',
+  diagnostics:[{severity:'info',message:'Routine note'},{severity:'error',message:'Shape conflict'}],
+  missing_parameters:['BLOCK']}}});
+ assert.equal(document.querySelector('h1').textContent,'kernel.py');
+ assert.equal(document.querySelector('h1').title,file);
+ assert.equal(document.querySelector('.panel-header select'),null);
+ assert.equal(document.querySelector('.analysis-notice').nextElementSibling.className,'error');
+ assert.equal(document.querySelector('.error').nextElementSibling.className,'workspace');
+ assert.equal(document.querySelector('.diagnostics').open,false);
+ assert.match(document.querySelector('.diagnostics').textContent,/Routine note/);
+ document.querySelector('.parameters').open=false;
+ document.querySelector('.analysis-notice button').click();
+ assert.equal(document.querySelector('.parameters').open,true);
+ assert.equal(document.activeElement,document.querySelector('.parameters textarea'));
 });
 
 test('output clicks and matching replies keep page/list/grid scroll, expanded parameters and focus',()=>{
@@ -261,6 +321,20 @@ test('parameter caret/size/scroll and manual collapsed state survive background 
  const state={analysis:{nodes,kernels:['k'],kernel:'k',diagnostics:[],missing_parameters:[]},selected:'out',stale:false,file:'a.py',version:1,parameters:{},input_shapes:{},program_ids:[]};
  send({type:'state',state});assert.deepEqual(scroll.position(),[0,200]);const restored=document.querySelector('textarea');assert.equal(document.activeElement,restored);assert.equal(restored.selectionStart,4);assert.equal(restored.selectionEnd,8);assert.equal(restored.scrollTop,14);assert.equal(restored.style.height,'96px');
  document.querySelector('.parameters').open=false;send({type:'state',state});assert.equal(document.querySelector('.parameters').open,false);
+});
+
+test('a worker launch failure ends the waiting prompt until a new analysis begins',()=>{
+ const {dom,send}=setup([node('out',[2])]);
+ const document=dom.window.document;
+ const loading={stale:true,file:'a.py',version:2,generation:2};
+ const error='找不到可用的 Python 3.10 或更高版本。';
+ send({type:'state',state:{...loading,error}});
+ assert.equal(document.querySelector('.status').textContent,'分析不可用');
+ assert.equal(document.querySelector('.error').textContent,error);
+ assert.equal(document.querySelector('.notice'),null);
+ send({type:'state',state:{...loading,generation:3}});
+ assert.equal(document.querySelector('.status').textContent,'等待分析');
+ assert.match(document.querySelector('.notice').textContent,/等待当前版本分析完成/);
 });
 
 test('temporary stale layout cannot overwrite saved viewport and a different file starts at top',()=>{

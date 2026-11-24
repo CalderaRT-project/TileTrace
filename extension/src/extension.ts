@@ -73,12 +73,10 @@ class Controller implements vscode.Disposable {
     const folder=vscode.workspace.getWorkspaceFolder(this.editor.document.uri);if(!folder)return;
     if(this.worker&&this.folder?.uri.toString()===folder.uri.toString())return;
     this.releaseWorker();this.folder=folder;
-    const root=folder.uri.fsPath;
-    let command=vscode.workspace.getConfiguration('tiletrace').get<string>('pythonPath','python');
-    if(command==='python'){const venv=path.join(root,'.venv',process.platform==='win32'?'Scripts':'bin',process.platform==='win32'?'python.exe':'python');if(fs.existsSync(venv))command=venv;}
+    const command=vscode.workspace.getConfiguration('tiletrace').get<string>('pythonPath','python');
     const bundle=path.join(this.context.extensionPath,'python');
     const pythonRoot=fs.existsSync(path.join(bundle,'tiletrace','worker.py'))?bundle:path.resolve(this.context.extensionPath,'..');
-    this.worker=new WorkerClient(workerLaunchOptions(command,pythonRoot,text=>this.output.append(text)));
+    this.worker=new WorkerClient(workerLaunchOptions(command,pythonRoot,text=>this.output.append(text),folder.uri.fsPath));
   }
   private releaseWorker():void {
     this.worker?.dispose();

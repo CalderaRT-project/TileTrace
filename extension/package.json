@@ -25,7 +25,7 @@
     "configuration": {
       "title": "TileTrace",
       "properties": {
-        "tiletrace.pythonPath": { "type": "string", "default": "python", "description": "Python 3.10+ 可执行文件；默认优先使用工作区 .venv。" }
+        "tiletrace.pythonPath": { "type": "string", "default": "python", "description": "Python 3.10+ 可执行文件。默认查找工作区 .venv 以及 PATH 中的 python3 或 python。" }
       }
     }
   },

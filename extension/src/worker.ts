@@ -1,14 +1,15 @@
 import {spawn,ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createInterface,Interface} from 'node:readline';
-export interface WorkerOptions {command:string;args:string[];cwd:string;env:NodeJS.ProcessEnv;timeout?:number;log:(text:string)=>void;}
+export interface WorkerOptions {command:string|(()=>Promise<string>);args:string[];cwd:string;env:NodeJS.ProcessEnv;timeout?:number;log:(text:string)=>void;}
 interface Pending {resolve:(value:unknown)=>void;reject:(reason:Error)=>void;timer:NodeJS.Timeout;}
 export class WorkerClient {
   private process?:ChildProcessWithoutNullStreams; private reader?:Interface;private pending=new Map<string,Pending>();private serial=0;private disposed=false;
+  private resolvedCommand?:Promise<string>;
   constructor(private options:WorkerOptions){}
-  private start():ChildProcessWithoutNullStreams {
+  private start(command:string):ChildProcessWithoutNullStreams {
     if(this.disposed)throw new Error('分析进程已关闭。');
     if(this.process)return this.process;
-    const child=spawn(this.options.command,this.options.args,{cwd:this.options.cwd,env:this.options.env,shell:false,windowsHide:true,stdio:'pipe'});
+    const child=spawn(command,this.options.args,{cwd:this.options.cwd,env:this.options.env,shell:false,windowsHide:true,stdio:'pipe'});
     this.process=child;this.reader=createInterface({input:child.stdout});
     this.reader.on('line',line=>{
       if(this.process!==child)return;
@@ -23,8 +24,18 @@ export class WorkerClient {
     return child;
   }
   request<T=unknown>(method:string,params:unknown):Promise<T> {
+    if(this.disposed)return Promise.reject(new Error('分析进程已关闭。'));
+    const command=this.options.command;
+    if(typeof command==='string')return this.sendRequest<T>(command,method,params);
+    this.resolvedCommand??=command().catch(error=>{
+      this.resolvedCommand=undefined;
+      throw error;
+    });
+    return this.resolvedCommand.then(resolved=>this.sendRequest<T>(resolved,method,params));
+  }
+  private sendRequest<T>(command:string,method:string,params:unknown):Promise<T> {
     return new Promise<T>((resolve,reject)=>{
-      let child:ChildProcessWithoutNullStreams;try{child=this.start();}catch(error){reject(error);return;}
+      let child:ChildProcessWithoutNullStreams;try{child=this.start(command);}catch(error){reject(error);return;}
       const id=String(++this.serial);
       const timer=setTimeout(()=>this.stop(new Error('分析请求超时，请减少源码规模或重启分析进程。')),this.options.timeout??15000);
       this.pending.set(id,{resolve:value=>resolve(value as T),reject,timer});
