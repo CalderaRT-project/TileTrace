@@ -38,10 +38,3 @@ export class WorkerClient {
   }
   dispose():void {this.disposed=true;this.stop(new Error('分析进程已关闭。'));}
 }
-/** Context writes must never wait behind a potentially expensive analysis. */
-export class WorkerPair {
-  readonly analysis:WorkerClient;
-  readonly context:WorkerClient;
-  constructor(options:WorkerOptions){this.analysis=new WorkerClient(options);this.context=new WorkerClient(options);}
-  dispose():void {this.analysis.dispose();this.context.dispose();}
-}

@@ -1,10 +1,10 @@
 # TileTrace
 
-独立实现的 Triton 张量变换可视化工具。打开 Triton 脚本，选中表达式，在 VS Code 右侧查看形状变化与元素来源；Codex 或其他 MCP agent 可查询同一份分析结果。
+TileTrace 是 VS Code 的 Triton 张量变换可视化扩展。打开 Triton 脚本，选中表达式，在编辑器右侧查看形状变化与元素来源。
 
 分析器不执行脚本、不导入 Triton、不启动 kernel；使用 Python 3.10+，无需 GPU。采用 [MIT 许可证](LICENSE)。
 
-> 当前版本：0.1.11。支持本地 VSIX 安装。
+> 当前版本为 0.1.12，支持本地 VSIX 安装。[更新日志](docs/CHANGELOG.md)
 
 ## 当前功能
 
@@ -12,27 +12,26 @@
 - 点击输出坐标，查看参与该位置计算的直接输入坐标；大归约限定展示数量。
 - 支持符号尺寸和缺失参数提示，未知语法提供诊断。
 - VS Code 读取未保存缓冲区、跟随选择和参数变化、反向定位源码。
-- 每个编辑器会话独立同步状态；Codex 通过 MCP 查询，不自动猜测当前文件。
 - 默认只显示关键张量步骤，参数与常量折叠到操作详情；“显示全部节点”可以查看完整分析图。标量归约及依赖归约结果的计算仍然保留。
 
 展示的是逻辑坐标与依赖。它不表示实际数值执行、GPU 线程布局、内存搬运或性能测量。只展开已知整数边界的 `tl.static_range`，一次分析共享最多 16 次循环迭代；未知/超限循环、循环控制跳转、数据相关分支与跨函数调用仍保留诊断。FlashAttention 示例是单 batch/head 的教学前向实现，尚未在本机验证 GPU 数值或性能。
 
 ## 安装与快速开始
 
-准备 Python 3.10+。从源码构建还需要 Node.js 与 npm，在本仓库目录执行：
+运行扩展需要 Python 3.10+。从源码构建还需要 Node.js 与 npm。在仓库根目录运行以下命令生成 VSIX。
 
-```powershell
-.\scripts\setup.ps1
-code --install-extension .\dist\tiletrace-0.1.11.vsix --force
+```sh
+npm --prefix extension ci
+npm --prefix extension run package
 ```
 
-已有 VSIX 时，也可以在 VS Code 扩展面板的菜单中选择 **Install from VSIX…** 安装。
+Windows PowerShell 也可以运行 `.\scripts\setup.ps1` 生成 VSIX。构建完成后，在 VS Code 扩展面板的菜单中选择 **Install from VSIX…**，安装 `dist/tiletrace-0.1.12.vsix`。
 
-安装后打开受信任的工作区及包含 `@triton.jit` kernel 的已保存 `.py` 文件，点击右上角的 TileTrace 矩阵图标打开面板。选中源码表达式，查看输入、输出形状；点击输出坐标查看直接输入来源。
+安装后，在受信任的工作区打开包含 `@triton.jit` kernel 的已保存 `.py` 文件。点击编辑器右上角的 **TileTrace 矩阵图标**，或运行命令 **TileTrace: 打开变换可视化**。选中源码表达式可查看输入和输出形状，点击输出坐标可查看直接输入来源。
 
 扩展自带静态分析 worker，无需安装 Triton、NumPy 或使用 GPU。Python 路径未自动识别时，在设置中配置 `tiletrace.pythonPath`。
 
-点击编辑器右上角独立的 **TileTrace 矩阵图标**，或通过命令面板运行 **TileTrace: 打开变换可视化**，手动打开面板。打开、切换或拆分 Triton 文件均不会自动弹出面板；面板已打开时仍跟随当前源码更新，关闭后需要再次手动打开。此图标与 VS Code 的拆分编辑器按钮分开，面板标签也使用相同的矩阵图标。若修改了 Python 路径，使用 **TileTrace: 重启分析进程** 重启分析进程。
+面板由用户手动打开，打开后会跟随当前源码更新。面板标签也使用 TileTrace 矩阵图标。运行 **TileTrace: 重启分析进程** 可重新启动本地分析。
 
 ## FlashAttention 示例与交互
 
@@ -42,7 +41,7 @@ code --install-extension .\dist\tiletrace-0.1.11.vsix --force
 
 依次查看行列 `arange`、新增轴、`q`/`k`/`v`、K 转置、`scores`、softmax 的归约与广播、`accumulator`、`output`。点击矩阵乘法输出坐标可查看左右输入的整行/整列；循环内操作标注 `start_n=0` 或 `start_n=32`。示例使用在线 softmax，逐块更新结果，无需构建整个注意力矩阵。
 
-默认只展示张量步骤，常量与参数折叠到操作详情。选中 `arange` 时展示起点、终点和长度；源码中的边界常量或归约轴会选中所属张量操作。前后导航遵循当前视图，底层完整图仍供 MCP 查询。
+默认只展示张量步骤，常量与参数折叠到操作详情。选中 `arange` 时展示起点、终点和长度；源码中的边界常量或归约轴会选中所属张量操作。前后导航遵循当前视图。
 
 一维张量的行列方向根据实际新增轴用法展示：`query_rows[:, None]` 对应行轴，因此 `query_rows` 的 16 个索引纵向排列；`head_cols[None, :]` 对应列轴，横向排列。真实 shape 仍是 `[16]` 或 `[32]`。同一向量用于两个方向时，查看具体新增轴操作可获得相应方向；单独查看时会提示方向未指定。矩阵卡片同时说明完整行列数与网格显示窗口，避免将只显示的 8 行误读成整个 program 的行数。
 
@@ -56,47 +55,16 @@ code --install-extension .\dist\tiletrace-0.1.11.vsix --force
 
 输入参数与 `input_shapes` 是 JSON 对象；program IDs 是坐标数组。形状未知时先补充缺失参数。源文件仅被静态读取，不能通过修改示例参数取得执行数值。
 
-## Codex 接入
+## 开发与测试
 
-使用 Codex 或其他 MCP agent 时，在本仓库目录安装 MCP 服务并生成项目配置：
+在仓库根目录运行以下命令检查分析器、编辑器控制逻辑和面板交互。Python 测试使用 Python 3.10+，VSIX 构建后还会检查打包内容和分析进程的隔离启动。
 
-```powershell
-.\scripts\setup.ps1 -SkipExtension
+```sh
+python -m unittest discover -s tests -v
+npm --prefix extension test
 ```
 
-`setup.ps1` 仅在 `.codex/config.toml` 不存在时生成本项目配置；已有文件会完整保留，请按下方示例手动添加或更新服务。生成的配置包含本机绝对路径，已加入 Git 忽略规则；移动项目后请手动更新路径。脚本不会修改用户级配置。该配置启动本地 STDIO MCP 服务；项目需要受信任，并在新 Codex 会话中加载。官方说明：[Codex MCP](https://learn.chatgpt.com/docs/extend/mcp)。
-
-如果把源码移到其他工作区，请让扩展的 `tiletrace.sessionDirectory` 与 MCP 的 `--session-dir` 指向同一个目录。可在需要分析的项目中手动添加：
-
-```toml
-[mcp_servers.tiletrace]
-command = "本工具虚拟环境的 Python 绝对路径"
-args = ["-m", "tiletrace", "mcp", "--session-dir", "目标工作区/.tiletrace 的绝对路径"]
-cwd = "本工具项目的绝对路径"
-```
-
-Windows 路径可使用正斜杠 `/`；若使用反斜杠，请在 TOML 双引号字符串中写成 `\\`。
-
-面板提供复制 agent 提示词的操作。提示词携带明确 session ID；让 Codex 查询 `get_visualization_context` 并调用 `inspect_transform`。三个工具：
-
-| 工具 | 功能 |
-| --- | --- |
-| `analyze_kernel` | 从提供的源码及参数生成操作图 |
-| `inspect_transform` | 查询一个操作的形状与输出坐标来源 |
-| `get_visualization_context` | 列出会话或读取明确会话的当前选择 |
-
-独立分析调用不会改变编辑器已发布的上下文。源码变化后上下文会标记为过期；不要基于过期结果作精确解释。
-
-## 命令行与开发
-
-CLI 与 Python 测试：
-
-```powershell
-.\.venv\Scripts\python.exe -m tiletrace analyze examples/flash_attention.py --kernel flash_attention_forward
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-```
-
-VS Code 扩展开发与打包说明见 [extension/README.md](extension/README.md)。设计与边界见 [设计文档](docs/design/tiletrace.md)，自动化证据与实际验收限制见 [验证记录](docs/verification.md)。
+[VS Code 扩展开发与打包说明](extension/README.md)
 
 ## 来源
 

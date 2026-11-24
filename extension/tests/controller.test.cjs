@@ -49,7 +49,10 @@ test('opening the viewer reuses its panel and gives it the themed toolbar icon',
  }finally{h.controller.dispose();}
 });
 test('production Controller startup ignores conflicting workspace modules and PYTHONPATH',async()=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'triton-isolation-'));const python=path.resolve(__dirname,'../../.venv',process.platform==='win32'?'Scripts/python.exe':'bin/python');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'triton-isolation-'));
+ const isWindows=process.platform==='win32';
+ const venv=path.resolve(__dirname,'../../.venv',isWindows?'Scripts/python.exe':'bin/python');
+ const python=fs.existsSync(venv)?venv:(isWindows?'python':'python3');
  const harness=createController({root,python});
  try{
   for(const name of ['tiletrace','json','sitecustomize'])fs.writeFileSync(path.join(root,name+'.py'),`from pathlib import Path\nPath(${JSON.stringify(path.join(root,name+'.sentinel'))}).write_text('EXECUTED')\nprint('WORKSPACE_EXECUTED')\n`);
@@ -59,21 +62,26 @@ test('production Controller startup ignores conflicting workspace modules and PY
   const result=spawnSync(options.command,options.args,{cwd:options.cwd,env:{...options.env,PYTHONPATH:root,PYTHONHOME:root},input:JSON.stringify(request)+'\n',encoding:'utf8',timeout:10000});
   assert.equal(result.status,0,result.stderr);assert.equal(fs.existsSync(path.join(root,'tiletrace.sentinel')),false);assert.equal(fs.existsSync(path.join(root,'json.sentinel')),false);assert.equal(fs.existsSync(path.join(root,'sitecustomize.sentinel')),false);
   assert.equal(JSON.parse(result.stdout).result.version,7);assert.notEqual(options.cwd,root);assert.ok(options.args.includes('-I'));assert.ok(options.args.includes('-S'));
- }finally{harness.releaseOld();harness.controller.dispose();fs.rmSync(root,{recursive:true,force:true});}
+ }finally{harness.controller.dispose();fs.rmSync(root,{recursive:true,force:true});}
 });
-test('Controller restart confines delayed old publication and cleanup to its old session',async()=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'triton-session-'));const h=createController({root,holdOld:true});
+test('Controller restart replaces the worker and ignores its old analysis',async()=>{
+ const h=createController({root:os.tmpdir(),holdFirstAnalysis:true});
  try{
-  h.controller.open();await until(()=>h.calls.some(c=>c.id===1&&c.method==='sync_context'));
-  const oldSession=h.messages.at(-1).state.session;
-  await h.controller.restart();await until(()=>h.calls.some(c=>c.id===2&&c.method==='sync_context'&&!c.p.context.stale));
-  const newSession=h.messages.at(-1).state.session;assert.ok(h.registry.has(newSession));
-  assert.ok(h.calls.some(c=>c.id===2&&c.method==='sync_context'&&c.p.context.stale));
-  h.releaseOld();await until(()=>h.calls.some(c=>c.id===1&&c.method==='clear_context'));await new Promise(resolve=>setTimeout(resolve,10));
-  assert.ok(h.registry.has(newSession),'old cleanup deleted current session');assert.notEqual(oldSession,newSession);assert.equal(h.registry.has(oldSession),false);
-  assert.ok(h.calls.filter(c=>c.id===1&&c.kind==='context').every(c=>c.p.session_id===oldSession));
-  await h.controller.copyPrompt();assert.ok(h.clipboard().includes(newSession));assert.equal(h.clipboard().includes(oldSession),false);
- }finally{h.releaseOld();h.controller.dispose();fs.rmSync(root,{recursive:true,force:true});}
+  h.controller.open();await until(()=>h.pendingAnalyses.length===1);
+  const oldGeneration=h.messages.at(-1).state.generation;
+  h.controller.restart();
+  assert.equal(h.launches.length,2);
+  assert.deepEqual(h.disposals,[1]);
+  const loading=h.messages.at(-1).state;
+  assert.equal(loading.stale,true);
+  assert.ok(loading.generation>oldGeneration);
+  await until(()=>!h.messages.at(-1).state.stale);
+  const messageCount=h.messages.length;
+  h.pendingAnalyses[0]();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.messages.length,messageCount);
+  assert.deepEqual(h.calls.map(({id,method})=>[id,method]),[[1,'analyze'],[2,'analyze']]);
+ }finally{h.controller.dispose();}
 });
 test('untrusted workspace cannot start an automatic or manually opened worker',async()=>{
  const h=createController({root:os.tmpdir(),trusted:false});try{h.controller.activateEditor(h.editor);h.controller.open();await new Promise(resolve=>setTimeout(resolve,20));assert.equal(h.launches.length,0);}finally{h.controller.dispose();}
@@ -104,7 +112,7 @@ test('Controller ignores old inspection errors after another click or closed doc
  }finally{h.controller.dispose();}
 });
 
-test('Controller keeps default and detailed source selection aligned with the published full graph',async()=>{
+test('Controller keeps default and detailed source selection aligned with the full graph',async()=>{
  const demo=require('./operations-fixture.cjs')();const sourceText=fs.readFileSync(path.resolve(__dirname,'fixtures/broadcast.py'),'utf8');
  const h=createController({root:os.tmpdir(),analysisNodes:demo.nodes,sourceText});
  try {
@@ -116,7 +124,6 @@ test('Controller keeps default and detailed source selection aligned with the pu
   await h.controller.message({type:'setNodeVisibility',generation:latest().generation+1,show_all:true});assert.equal(latest().show_all,false);
   await h.controller.message({type:'setNodeVisibility',generation:latest().generation,show_all:true});h.controller.selection(h.editor);assert.equal(latest().selected,zero.id);
   await h.controller.message({type:'setNodeVisibility',generation:latest().generation,show_all:false});assert.equal(latest().selected,rows.id);
-  await until(()=>{const context=h.calls.filter(c=>c.method==='sync_context').at(-1)?.p.context;return context?.selected_node_id===rows.id&&context.view_mode==='tensor_steps';});
-  const snapshot=h.calls.filter(c=>c.method==='sync_context').at(-1).p.context;assert.equal(snapshot.analysis.nodes.length,16);assert.equal(snapshot.view_mode,'tensor_steps');assert.equal(snapshot.visible_node_ids.length,9);
+  assert.equal(latest().analysis.nodes.length,16);assert.equal(latest().show_all,false);
  } finally {h.controller.dispose();}
 });

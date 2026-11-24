@@ -369,7 +369,7 @@
     const header=el('header');const title=el('div',undefined,'title-row');title.append(el('h1','TileTrace · 变换'),el('span',state.stale?'等待分析':'静态分析','status'));header.append(title);
     header.append(el('p','形状与逻辑坐标 · 不执行 kernel','muted'));
     const file=el('p',`${state.file||'尚未选择源文件'} · v${state.version||0}`,'file');file.title=state.file||'';header.append(file);
-    const actions=el('div',undefined,'toolbar');actions.append(button('复制 Agent 提示词',()=>post('copyPrompt')));
+    const actions=el('div',undefined,'toolbar');
     const display=el('label',undefined,'display-mode');const simple=el('input');simple.type='checkbox';simple.checked=simpleMode;simple.dataset.role='simple-mode';
     simple.addEventListener('change',()=>{simpleMode=simple.checked;pendingInspection=null;inspection=null;outputIndex=null;render();});
     display.title='大于 4 且能被 4 整除的行或列，每 4 个坐标合并显示；原始 shape 不变。';display.append(simple,el('span','简约'));actions.append(display);

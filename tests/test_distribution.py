@@ -1,6 +1,5 @@
-"""Acceptance checks for the standalone Python and VS Code artifacts."""
+"""Acceptance checks for the packaged VS Code extension."""
 
-import hashlib
 import json
 import os
 import subprocess
@@ -14,7 +13,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = json.loads((ROOT / "extension/package.json").read_text(encoding="utf-8"))["version"]
 VSIX = ROOT / f"dist/tiletrace-{VERSION}.vsix"
-WHEEL = ROOT / f"dist/tiletrace-{VERSION}-py3-none-any.whl"
 
 
 @unittest.skipUnless(VSIX.exists(), "Build the VSIX with npm run package in extension/ first")
@@ -24,12 +22,18 @@ class ExtensionDistributionTests(unittest.TestCase):
             names = set(archive.namelist())
             manifest = json.loads(archive.read("extension/package.json"))
             self.assertIn("extension/" + manifest["main"].removeprefix("./"), names)
+            contributes = manifest["contributes"]
+            self.assertEqual({command["command"] for command in contributes["commands"]},
+                             {"tiletrace.open", "tiletrace.restartWorker"})
+            self.assertEqual(set(contributes["configuration"]["properties"]), {"tiletrace.pythonPath"})
             self.assertIn("extension/media/operations.js", names)
             self.assertNotIn("extension/media/operations.d.ts", names)
-            for source in (ROOT / "tiletrace").glob("*.py"):
-                bundled = archive.read("extension/python/tiletrace/" + source.name)
-                self.assertEqual(hashlib.sha256(bundled).hexdigest(),
-                                 hashlib.sha256(source.read_bytes()).hexdigest(), source.name)
+            backend = "extension/python/tiletrace/"
+            sources = {backend + source.name: source for source in (ROOT / "tiletrace").glob("*.py")}
+            self.assertEqual({name for name in names if name.startswith(backend) and not name.endswith("/")},
+                             set(sources))
+            for name, source in sources.items():
+                self.assertEqual(archive.read(name), source.read_bytes(), source.name)
             self.assertFalse(any("node_modules/" in name or "/.venv/" in name or "__pycache__" in name for name in names))
 
     def test_packaged_worker_ignores_workspace_modules_and_startup_environment(self):
@@ -58,10 +62,10 @@ class ExtensionDistributionTests(unittest.TestCase):
             # Exercise the exact production launch helper extracted from the VSIX.
             helper_script = (
                 "const {workerLaunchOptions}=require(process.argv[1]);"
-                "const o=workerLaunchOptions(process.argv[2],process.argv[3],process.argv[4],()=>{});"
+                "const o=workerLaunchOptions(process.argv[2],process.argv[3],()=>{});"
                 "process.stdout.write(JSON.stringify({command:o.command,args:o.args,cwd:o.cwd}));")
             helper = subprocess.run(["node", "-e", helper_script, str(target / "extension/out/launch.js"),
-                                     sys.executable, str(target / "extension/python"), str(workspace / "sessions")],
+                                     sys.executable, str(target / "extension/python")],
                                     cwd=target, text=True, capture_output=True, timeout=10)
             self.assertEqual(helper.returncode, 0, helper.stderr)
             launch = json.loads(helper.stdout)
@@ -80,17 +84,6 @@ class ExtensionDistributionTests(unittest.TestCase):
             self.assertEqual(response["result"]["version"], 99)
             transposed = next(n for n in response["result"]["nodes"] if n["name"] == "z")
             self.assertEqual(transposed["shape"], [4, 2])
-
-
-@unittest.skipUnless(WHEEL.exists(), "Build the Python wheel with pip wheel --no-deps --wheel-dir dist . first")
-class PythonDistributionTests(unittest.TestCase):
-    def test_python_wheel_contains_current_modules_and_optional_mcp_extra(self):
-        with zipfile.ZipFile(WHEEL) as archive:
-            for source in (ROOT / "tiletrace").glob("*.py"):
-                self.assertEqual(archive.read("tiletrace/" + source.name), source.read_bytes(), source.name)
-            metadata_name = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
-            metadata = archive.read(metadata_name).decode("utf-8")
-            self.assertIn("Provides-Extra: mcp", metadata)
 
 
 if __name__ == "__main__":
