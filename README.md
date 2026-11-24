@@ -23,7 +23,7 @@
 
 ```powershell
 .\scripts\setup.ps1
-code --install-extension .\dist\tiletrace-0.1.1.vsix --force
+code --install-extension .\dist\tiletrace-0.1.0.vsix --force
 ```
 
 安装后打开本项目的 `examples/transforms.py`。面板默认随 Triton 文件打开，也可以通过命令面板运行 **TileTrace: 打开变换可视化**。若修改了 Python 路径，使用 **TileTrace: 重启分析进程** 重启分析进程。
