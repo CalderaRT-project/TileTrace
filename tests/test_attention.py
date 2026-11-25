@@ -92,6 +92,59 @@ class AttentionTests(unittest.TestCase):
             self.assertEqual(len([n for n in result['nodes'] if n['op'] == 'dot']), 4)
             self.assertEqual([n['attrs']['loops'][-1]['value'] for n in result['nodes'] if n['op'] == 'dot'], [0, 0, 32, 32])
 
+    def test_flash_attention_read_blocks_link_arange_and_both_loop_iterations(self):
+        example = Path(__file__).resolve().parents[1] / 'examples' / 'flash_attention.py'
+        result = analyze(example.read_text(encoding='utf-8'))
+        blocks = result['read_blocks']
+        self.assertEqual([block['pointer'] for block in blocks], ['Q', 'K', 'V', 'K', 'V'])
+        row, col = blocks[0]['axes']
+        self.assertEqual(row['program_steps'], (16, 0, 0))
+        self.assertEqual((row['start'], row['length'], row['limit'], row['stride']), (0, 16, 64, 32))
+        self.assertEqual((col['start'], col['length'], col['stride']), (0, 32, 1))
+        self.assertIn(row['arange_node'], blocks[0]['related_nodes'])
+        for block, row_start in zip(blocks[1:], (0, 0, 32, 32)):
+            self.assertEqual((block['axes'][0]['start'], block['axes'][0]['length']), (row_start, 32))
+
+    def test_separable_two_axis_blocks_keep_both_mask_limits(self):
+        result = analyze(source(
+            'rows = tl.program_id(0) * BM + tl.arange(0, BM)\n'
+            'cols = tl.program_id(1) * BN + tl.arange(0, BN)\n'
+            'mask = (rows[:, None] < M) & (cols[None, :] < N)\n'
+            'a = tl.load(X + rows[:, None] * N + cols[None, :], mask=mask)',
+            'X, M: tl.constexpr = 18, N: tl.constexpr = 30, BM: tl.constexpr = 4, BN: tl.constexpr = 8'),
+            program_ids=[4, 3])
+        self.assertEqual(len(result['read_blocks']), 1)
+        block = result['read_blocks'][0]
+        self.assertEqual(block['node_id'], named(result, 'a')['id'])
+        self.assertEqual([axis['length'] for axis in block['axes']], [4, 8])
+        self.assertEqual([axis['stride'] for axis in block['axes']], [30, 1])
+        self.assertEqual([axis['limit'] for axis in block['axes']], [18, 30])
+        self.assertEqual([axis['program_steps'] for axis in block['axes']], [(4, 0, 0), (0, 8, 0)])
+
+    def test_vector_blocks_reuse_named_masks_and_skip_non_affine_offsets(self):
+        result = analyze(source(
+            'offsets = 8 * tl.program_id(0) + tl.arange(0, 8)\n'
+            'mask = offsets < 25\n'
+            'valid = mask\n'
+            'a = tl.load(X + offsets, valid)\n'
+            'b = tl.load(X + offsets % 25)', 'X'))
+        self.assertEqual(len(result['read_blocks']), 1)
+        block = result['read_blocks'][0]
+        self.assertEqual(block['node_id'], named(result, 'a')['id'])
+        self.assertEqual(block['axes'][0]['program_steps'], (8, 0, 0))
+        self.assertEqual(block['axes'][0]['limit'], 25)
+
+    def test_matrix_block_does_not_confuse_broadcast_masks_or_overlapping_strides(self):
+        result = analyze(source(
+            'rows = tl.program_id(0) * 8 + tl.arange(0, 8)\n'
+            'cols = tl.arange(0, 8)\n'
+            'a = tl.load(X + rows[:, None] * 16 + cols[None, :], mask=rows[None, :] < 16)\n'
+            'b = tl.load(X + rows[:, None] + cols[None, :])', 'X'))
+        self.assertEqual(len(result['read_blocks']), 1)
+        block = result['read_blocks'][0]
+        self.assertEqual(block['node_id'], named(result, 'a')['id'])
+        self.assertTrue(all('limit' not in axis for axis in block['axes']))
+
 
 if __name__ == '__main__':
     unittest.main()

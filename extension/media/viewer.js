@@ -12,10 +12,11 @@
   let localError = '';
   const slices = new Map();
   const simpleSlices = new Map();
-  let simpleMode = false;
+  let simpleMode = true;
   const drafts = new Map();
   const remembered = vscode.getState() || {};
   const readingPositions = new Map();
+  const blockSelections = new Map();
   const consumerGraphs = new WeakMap();
   let flowLayoutFrame=null;
   const flowObserver=typeof ResizeObserver==='function'?new ResizeObserver(()=>queueFlowLayout()):null;
@@ -116,7 +117,12 @@
     const active=simpleMode?simpleSlices:slices;
     if(!active.has(node.id)) {
       const previous=simpleMode?slices.get(node.id):null;
-      active.set(node.id,{prefix:previous?[...previous.prefix]:node.shape.slice(0,-2).map(()=>0),row:previous?.row||0,col:previous?.col||0,expanded:previous?.expanded||false,detail:null});
+      active.set(node.id,{
+        prefix:previous?[...previous.prefix]:node.shape.slice(0,-2).map(()=>0),
+        row:previous?.expanded?previous.row:0,
+        col:previous?.expanded?previous.col:0,
+        expanded:false,
+      });
     }
     return active.get(node.id);
   }
@@ -163,35 +169,17 @@
     const rows=rank>=2?node.shape[rank-2]:vertical?node.shape[0]:1;
     const cols=rank>=2?node.shape[rank-1]:rank===1&&!vertical?node.shape[0]:1;
     const slice=sliceFor(node);
-    const maxRows=vertical||cols===1?16:8,maxCols=16;
-    const factor=length=>simpleMode&&!slice.detail&&length>4&&length%4===0?4:1;
-    const rowStep=factor(rows),colStep=factor(cols),rowCount=rows/rowStep,colCount=cols/colStep;
-    let startRow=slice.expanded?Math.floor(Math.min(rank===1?(vertical?slice.col:0):slice.row,rows-1)/rowStep)*rowStep:0;
-    let startCol=slice.expanded?Math.floor(Math.min(vertical?0:slice.col,cols-1)/colStep)*colStep:0;
-    if(rowStep>1&&rowCount<=maxRows)startRow=0;
-    if(colStep>1&&colCount<=maxCols)startCol=0;
-    let rowIndices,colIndices;
-    if(slice.detail) {
-      startRow=rank>=2?slice.detail.start[rank-2]:vertical?slice.detail.start[0]:0;
-      startCol=rank>=2?slice.detail.start[rank-1]:rank===1&&!vertical?slice.detail.start[0]:0;
-      const endRow=rank>=2?slice.detail.end[rank-2]:vertical?slice.detail.end[0]:0;
-      const endCol=rank>=2?slice.detail.end[rank-1]:rank===1&&!vertical?slice.detail.end[0]:0;
-      rowIndices=axisCoordinates(endRow+1,startRow,maxRows,false);colIndices=axisCoordinates(endCol+1,startCol,maxCols,false);
-    } else {
-      rowIndices=axisCoordinates(rowCount,startRow/rowStep,maxRows,!slice.expanded).map(i=>i===null?null:i*rowStep);
-      colIndices=axisCoordinates(colCount,startCol/colStep,maxCols,!slice.expanded).map(i=>i===null?null:i*colStep);
-    }
-    return {axis,vertical,rows,cols,maxRows,maxCols,startRow,startCol,rowStep,colStep,rowCount,colCount,rowIndices,colIndices,detail:slice.detail,grouped:rowStep>1||colStep>1};
-  }
-  const axisLabel=(index,step)=>String(index/step);
-  const containsCoordinate=(index,start,end)=>index.length===start.length&&index.every((value,axis)=>value>=start[axis]&&value<=end[axis]);
-  function groupDetail(node,output,detail,occurrence=0) {
-    const previous=sliceFor(node).detail;sliceFor(node).detail=detail;
-    if(output){pendingInspection=null;outputIndex=null;inspection=null;}
-    render();
-    const card=Array.from(root.querySelectorAll('[data-card-node]')).find(candidate=>candidate.dataset.cardNode===node.id&&candidate.dataset.cardRole===(output?'output':'input')&&candidate.dataset.cardOccurrence===String(occurrence));
-    const focus=detail?card?.querySelector('[data-role="back-to-simple"]'):Array.from(card?.querySelectorAll('.group-cell')||[]).find(cell=>cell.dataset.groupStart===JSON.stringify(previous?.start));
-    focus?.focus({preventScroll:true});
+    const maxRows=simpleMode?4:(vertical||cols===1?16:8);
+    const maxCols=simpleMode?4:16;
+    // At the edge, keep the compact window full whenever the axis permits it.
+    const maxRowStart=Math.max(0,rows-(simpleMode?maxRows:1));
+    const maxColStart=Math.max(0,cols-(simpleMode?maxCols:1));
+    const expanded=simpleMode||slice.expanded;
+    const startRow=expanded?Math.min(vertical?slice.col:slice.row,maxRowStart):0;
+    const startCol=expanded&&!vertical?Math.min(slice.col,maxColStart):0;
+    const rowIndices=axisCoordinates(rows,startRow,maxRows,!expanded);
+    const colIndices=axisCoordinates(cols,startCol,maxCols,!expanded);
+    return {axis,vertical,rows,cols,maxRows,maxCols,maxRowStart,maxColStart,startRow,startCol,rowIndices,colIndices,expanded};
   }
   function gridMode(node,output,expanded,axis=null,start=0) {
     const slice=sliceFor(node);slice.expanded=expanded;
@@ -199,15 +187,15 @@
     if(output){pendingInspection=null;outputIndex=null;inspection=null;}
     render();
   }
-  function ellipsis(node,output,axis,length,key,step=1) {
+  function ellipsis(node,output,axis,length,key) {
     const gap=button('…',event=>{
       const owner=event.currentTarget.closest('[data-card-node]');const occurrence=owner.dataset.cardOccurrence;
-      gridMode(node,output,true,axis,3*step);
+      gridMode(node,output,true,axis,3);
       const card=Array.from(root.querySelectorAll('[data-card-node]')).find(candidate=>candidate.dataset.cardNode===node.id&&candidate.dataset.cardRole===(output?'output':'input')&&candidate.dataset.cardOccurrence===occurrence);
       card?.querySelector('[data-role="toggle-grid-window"]')?.focus({preventScroll:true});
     },'axis-ellipsis');
     gap.dataset.axis=String(axis);gap.dataset.gapKey=key;
-    const label=`轴 ${axis} 的 ${3*step}–${length-3*step-1} 坐标已省略，点击查看中间窗口`;
+    const label=`轴 ${axis} 的 3–${length-4} 坐标已省略，点击查看中间窗口`;
     gap.title=label;gap.setAttribute('aria-label',label);return gap;
   }
   function tensorCard(node,output,occurrence=0) {
@@ -222,15 +210,16 @@
     const shape=node.shape;const rank=shape.length;const slice=sliceFor(node);
     let total=1n;for(const size of shape)total*=BigInt(size);
     if(total===0n){card.append(el('p','空张量，没有可选坐标。','notice'));return card;}
-    const layout=gridLayout(node);const {rows,cols,maxRows,maxCols,vertical,rowStep,colStep,rowCount,colCount,grouped,detail}=layout;
-    shapeBadge.title=rank===0?'标量，shape []':rank===1?(layout.axis===0?'一维索引，对应矩阵行轴，纵向展示；shape '+shapeText(node):layout.axis===1?'一维索引，对应矩阵列轴，横向展示；shape '+shapeText(node):'一维向量，未指定行列方向；shape '+shapeText(node)):`当前切片包含 ${rows} 行 × ${cols} 列；展开窗口最多展示 ${maxRows} 行 × ${maxCols} 列。`;
-    if(grouped)shapeBadge.title+=` 简约：${rank===1?Math.max(rowCount,colCount):rowCount+' × '+colCount} 个坐标组，原始 shape 不变。`;
-    const controls=el('div',undefined,'slice-controls');
-    if(detail){const back=button('返回简约',()=>groupDetail(node,output,null,occurrence));back.dataset.role='back-to-simple';controls.append(back);}
-    else if(rowCount>8||colCount>8){const toggle=button(slice.expanded?'收起为首尾概览':'展开显示窗口',()=>gridMode(node,output,!slice.expanded));toggle.dataset.role='toggle-grid-window';toggle.setAttribute('aria-expanded',String(slice.expanded));toggle.title='长度超过 8 时概览保留首尾各 3 项；展开查看中间坐标。';controls.append(toggle);}
-    if(rank>2){controls.title='前缀轴选择一个切片；网格对应最后两轴。';for(let axis=0;axis<rank-2;axis++)controls.append(numericControl(`轴 ${axis}`,axis,slice.prefix[axis],shape[axis]-1,n=>{slice.prefix[axis]=n;slice.detail=null;},output));}
-    if(!detail&&slice.expanded&&rowCount>maxRows)controls.append(numericControl(`轴 ${vertical?0:rank-2} 起点`,vertical?0:rank-2,layout.startRow,rows-1,n=>{if(vertical)slice.col=Math.floor(n/rowStep)*rowStep;else slice.row=Math.floor(n/rowStep)*rowStep;},output));
-    if(!detail&&slice.expanded&&colCount>maxCols)controls.append(numericControl(`轴 ${rank-1} 起点`,rank-1,layout.startCol,cols-1,n=>{slice.col=Math.floor(n/colStep)*colStep;},output));
+    const layout=gridLayout(node);const {rows,cols,maxRows,maxCols,vertical,expanded}=layout;
+    shapeBadge.title=rank===0?'标量，shape []':rank===1?(layout.axis===0?'一维索引，对应矩阵行轴，纵向展示；shape '+shapeText(node):layout.axis===1?'一维索引，对应矩阵列轴，横向展示；shape '+shapeText(node):'一维向量，未指定行列方向；shape '+shapeText(node)):`当前切片包含 ${rows} 行 × ${cols} 列；${simpleMode?'简约':'展开'}窗口最多展示 ${maxRows} 行 × ${maxCols} 列。`;
+    const controls=el('div',undefined,simpleMode?'slice-controls simple-window':'slice-controls');
+    if(!simpleMode&&(rows>8||cols>8)){const toggle=button(slice.expanded?'收起为首尾概览':'展开显示窗口',()=>gridMode(node,output,!slice.expanded));toggle.dataset.role='toggle-grid-window';toggle.setAttribute('aria-expanded',String(slice.expanded));toggle.title='长度超过 8 时概览保留首尾各 3 项；展开查看中间坐标。';controls.append(toggle);}
+    if(rank>2){controls.title='前缀轴选择一个切片；网格对应最后两轴。';for(let axis=0;axis<rank-2;axis++)controls.append(numericControl(`轴 ${axis}`,axis,slice.prefix[axis],shape[axis]-1,n=>{slice.prefix[axis]=n;},output));}
+    if(expanded&&rows>maxRows){
+      const axis=vertical?0:rank-2;
+      controls.append(numericControl(simpleMode?'行起点':`轴 ${axis} 起点`,axis,layout.startRow,layout.maxRowStart,n=>{if(vertical)slice.col=n;else slice.row=n;},output));
+    }
+    if(expanded&&cols>maxCols)controls.append(numericControl(simpleMode?'列起点':`轴 ${rank-1} 起点`,rank-1,layout.startCol,layout.maxColStart,n=>{slice.col=n;},output));
     if(controls.childNodes.length)card.append(controls);
     const table=el('table',undefined,'index-grid');table.setAttribute('aria-label',`${node.name} 逻辑坐标`);
     const head=el('thead');const heading=el('tr');
@@ -238,39 +227,38 @@
     if(rank>=2)corner.title=`行轴 ${rank-2} · 列轴 ${rank-1}`;
     heading.append(corner);
     const {rowIndices,colIndices}=layout;
-    for(const col of colIndices){const th=el('th');th.scope='col';if(col===null&&rank>=2)th.append(ellipsis(node,output,rank-1,cols,'header-col',colStep));else th.textContent=col===null?'…':vertical?'索引':rank?axisLabel(col,colStep):'标量';heading.append(th);}head.append(heading);table.append(head);
-    const matrix=rank>=2&&!grouped;
+    for(const col of colIndices){const th=el('th');th.scope='col';if(col===null&&rank>=2)th.append(ellipsis(node,output,rank-1,cols,'header-col'));else th.textContent=col===null?'…':vertical?'索引':rank?String(col):'标量';heading.append(th);}head.append(heading);table.append(head);
+    const matrix=rank>=2;
     const selectedIndex=output&&outputIndex?JSON.stringify(outputIndex):null;
     const origin=!output&&inspection?.status==='exact'?inspection.origins.find(item=>item.node_id===node.id):undefined;
+    const originIndices=new Set(origin?.indices.map(index=>JSON.stringify(index)));
     const body=el('tbody');let displayed=0;
     for(const row of rowIndices){
-      const tr=el('tr');const rowHeader=el('th',row===null?'…':rank>=2||vertical?axisLabel(row,rowStep):'—');rowHeader.scope='row';tr.append(rowHeader);
-      if(row===null){const td=el('td');td.colSpan=colIndices.length;td.append(ellipsis(node,output,vertical?0:rank-2,rows,'row',rowStep));tr.append(td);body.append(tr);continue;}
+      const tr=el('tr');const rowHeader=el('th',row===null?'…':rank>=2||vertical?row:'—');rowHeader.scope='row';tr.append(rowHeader);
+      if(row===null){const td=el('td');td.colSpan=colIndices.length;td.append(ellipsis(node,output,vertical?0:rank-2,rows,'row'));tr.append(td);body.append(tr);continue;}
       for(const col of colIndices){
-        if(col===null){const td=el('td');td.append(ellipsis(node,output,rank-1,cols,`col:${row}`,colStep));tr.append(td);continue;}
+        if(col===null){const td=el('td');td.append(ellipsis(node,output,rank-1,cols,`col:${row}`));tr.append(td);continue;}
         const index=rank===0?[]:rank===1?[vertical?row:col]:[...slice.prefix,row,col];
-        const end=[...index];if(rank>=2)end[rank-2]+=rowStep-1;if(rank>=1)end[rank-1]+=(rank===1&&vertical?rowStep:colStep)-1;
-        const label=grouped?(rank===1?axisLabel(index[0],vertical?rowStep:colStep):`${axisLabel(row,rowStep)},${axisLabel(col,colStep)}`):rank===0?'·':rank===1?String(index[0]):`${index[rank-2]},${index[rank-1]}`;
+        const label=rank===0?'·':rank===1?String(index[0]):`${row},${col}`;
         const td=el('td');const cell=button(matrix?undefined:label,()=>{
-          if(grouped){groupDetail(node,output,{start:[...index],end:[...end]},occurrence);return;}
           if(!output)return;outputIndex=index;inspection=null;
           const request_id=String(++inspectionSequence);pendingInspection={request_id,generation:state.generation,node_id:node.id,index};
           post('inspectIndex',{node_id:node.id,index,request_id});render();
         },matrix?'cell matrix-cell':'cell');
         if(matrix)cell.append(el('span',label,'cell-coordinate'));
-        cell.dataset.node=node.id;if(grouped){cell.classList.add('group-cell');cell.dataset.groupStart=JSON.stringify(index);cell.dataset.groupEnd=JSON.stringify(end);}else cell.dataset.index=JSON.stringify(index);if(output)cell.dataset.output='true';
-        cell.title=grouped?`${node.name} ${coordText(index)}–${coordText(end)} · 坐标组，点击查看真实坐标`:`${node.name} ${coordText(index)} · 逻辑坐标，非数值`;cell.setAttribute('aria-label',cell.title);cell.disabled=!output&&!grouped;
-        if(output&&!grouped){
+        cell.dataset.node=node.id;cell.dataset.index=JSON.stringify(index);if(output)cell.dataset.output='true';
+        cell.title=`${node.name} ${coordText(index)} · 逻辑坐标，非数值`;cell.setAttribute('aria-label',cell.title);cell.disabled=!output;
+        if(output){
           const active=selectedIndex===cell.dataset.index;
           cell.classList.toggle('selected-cell',active);
           cell.setAttribute('aria-pressed',String(active));
         }
-        if(origin?.indices.some(coordinate=>containsCoordinate(coordinate,index,end)))cell.classList.add('origin');
+        if(originIndices.has(cell.dataset.index))cell.classList.add('origin');
         td.append(cell);tr.append(td);displayed++;
       }
       body.append(tr);
     }
-    table.append(body);const scroll=el('div',undefined,'grid-scroll');scroll.title=grouped?`显示 ${displayed} 个坐标组 / 原始 ${total.toString()} 个逻辑坐标；点击分组查看真实坐标。`:`显示 ${displayed} 个逻辑坐标 / 总计 ${total.toString()} 个${rank>2?'（当前切片）':''}；每卡最多 128 个。`;
+    table.append(body);const scroll=el('div',undefined,'grid-scroll');scroll.title=`显示 ${displayed} 个逻辑坐标 / 总计 ${total.toString()} 个${rank>2?'（当前切片）':''}；每卡最多 ${simpleMode?16:128} 个。`;
     table.setAttribute('aria-label',`${node.name} 逻辑坐标；${shapeBadge.title} ${scroll.title}${rank>2?' '+controls.title:''}`);
     scroll.append(table);card.append(scroll);
     return card;
@@ -318,9 +306,9 @@
         if(rank===0)return true;
         if(rank>2&&!slice.prefix.every((v,i)=>v===index[i]))return false;
         const row=rank>=2?index[rank-2]:layout.vertical?index[0]:0;const col=layout.vertical?0:index[rank-1];
-        return layout.rowIndices.some(start=>start!==null&&row>=start&&row<start+layout.rowStep)&&layout.colIndices.some(start=>start!==null&&col>=start&&col<start+layout.colStep);
-      }).length;line.append(el('p',`当前${layout.grouped?'简约网格覆盖':'网格高亮'} ${visible} / ${origin.indices.length}${visible<origin.indices.length?' · 其余在显示范围之外':''}`,'muted'));}
-      if(n&&origin.indices.length){const jump=button('定位首个来源坐标',()=>{const index=origin.indices[0];const slice=sliceFor(n);slice.detail=null;slice.expanded=true;slice.prefix=index.slice(0,-2);slice.row=index.length>=2?index[index.length-2]:0;slice.col=index.length?index[index.length-1]:0;render();});jump.dataset.originTarget=origin.node_id;line.append(jump);}
+        return layout.rowIndices.includes(row)&&layout.colIndices.includes(col);
+      }).length;line.append(el('p',`当前网格高亮 ${visible} / ${origin.indices.length}${visible<origin.indices.length?' · 其余在显示范围之外':''}`,'muted'));}
+      if(n&&origin.indices.length){const jump=button('定位首个来源坐标',()=>{const index=origin.indices[0];const slice=sliceFor(n);slice.expanded=true;slice.prefix=index.slice(0,-2);slice.row=index.length>=2?index[index.length-2]:0;slice.col=index.length?index[index.length-1]:0;render();});jump.dataset.originTarget=origin.node_id;line.append(jump);}
       line.append(detail);box.append(line);
     }
     if(!inspection.origins.length)box.append(el('p','此节点没有直接输入来源。','muted'));
@@ -399,17 +387,16 @@
     if(element.matches('.operation-list'))return 'operations';
     if(element.matches('.expression'))return `expression:${element.dataset.ownerNode}`;
     if(element.matches('.grid-scroll'))return `grid:${scope}`;
-    if(element.matches('.group-cell'))return `group:${scope}:${element.dataset.groupStart}`;
     if(element.matches('.cell'))return `cell:${scope}:${element.dataset.index}`;
     if(element.matches('.axis-ellipsis'))return `gap:${scope}:${element.dataset.gapKey}`;
     if(element.matches('[data-role="toggle-grid-window"]'))return `grid-mode:${scope}`;
-    if(element.matches('[data-role="back-to-simple"]'))return `group-back:${scope}`;
     if(element.matches('.operation'))return `operation:${element.dataset.node}`;
     if(element.matches('textarea'))return `parameter:${element.getAttribute('aria-label')}`;
     if(element.matches('input[type="number"]'))return `slice:${scope}:${element.dataset.axis}:${element.getAttribute('aria-label')}`;
     if(element.matches('[data-role="show-all-nodes"]'))return 'visibility';
-    if(element.matches('[data-role="simple-mode"]'))return 'simple-mode';
+    if(element.dataset.gridView)return `grid-view:${element.dataset.gridView}`;
     if(element.matches('select[aria-label="Kernel"]'))return 'kernel';
+    if(element.matches('.block-access'))return `block-access:${element.dataset.ownerNode}`;
     if(element.matches('summary')&&element.parentElement.dataset.disclosure)return `disclosure:${element.parentElement.dataset.disclosure}`;
     if(element.dataset.originTarget)return `origin:${element.dataset.originTarget}`;
     if(element.matches('button'))return `button:${element.textContent}`;
@@ -470,6 +457,19 @@
     const needed=input.getBoundingClientRect().width+output.getBoundingClientRect().width+gap;
     const layout=Math.ceil(needed)<=available?'horizontal':'vertical';
     if(flow.dataset.layout!==layout)flow.dataset.layout=layout;
+    if(layout!=='horizontal')return;
+    const grids=[output.querySelector('.grid-scroll'),input.firstElementChild?.querySelector('.grid-scroll')];
+    if(grids.some(grid=>!grid))return;
+    // Measure before the grids so their existing offsets cannot affect alignment.
+    const headerBottoms=grids.map(grid=>{
+      const {y,height}=grid.previousElementSibling.getBoundingClientRect();
+      return y+height;
+    });
+    const baseline=Math.max(...headerBottoms);
+    grids.forEach((grid,index)=>{
+      const offset=`${baseline-headerBottoms[index]}px`;
+      if(grid.style.getPropertyValue('--grid-offset')!==offset)grid.style.setProperty('--grid-offset',offset);
+    });
   }
   function observeFlowLayout() {
     flowObserver?.disconnect();fitFlowLayout();
@@ -527,11 +527,151 @@
     } else if(kernels.length===1){
       const kernel=el('code',kernels[0],'kernel-name');kernel.title=kernels[0];actions.append(kernel);
     }
-    const display=el('label',undefined,'display-mode');const simple=el('input');simple.type='checkbox';simple.checked=simpleMode;simple.dataset.role='simple-mode';
-    simple.addEventListener('change',()=>{simpleMode=simple.checked;pendingInspection=null;inspection=null;outputIndex=null;render();});
-    display.title='大于 4 且能被 4 整除的行或列，每 4 个坐标合并显示；原始 shape 不变。';display.append(simple,el('span','简约'));actions.append(display);
     if(state.stale)actions.append(el('span',state.error?'分析不可用':'等待分析','status'));
     header.append(actions);return header;
+  }
+  function blockRange(axis, programIds) {
+    const start=axis.program_steps.reduce((offset,step,index)=>offset+BigInt(step)*BigInt(programIds[index]??0),BigInt(axis.start));
+    const end=start+BigInt(axis.length);
+    if(!Number.isSafeInteger(Number(start))||!Number.isSafeInteger(Number(end)))return null;
+    return {start:Number(start),end:Number(end)};
+  }
+  const blockInterval=range=>`[${range.start}, ${range.end})`;
+  function blockFormula(axis, local) {
+    const append=(text,amount,term)=>amount?`${text}${amount<0?' − ':' + '}${term}`:text;
+    const offset=axis.program_steps.reduce((formula,step,index)=>
+      append(formula,step,`${Math.abs(step)===1?'':Math.abs(step)+' × '}program_id(${index})`),local);
+    return append(offset,axis.start,String(Math.abs(axis.start)));
+  }
+  function blockDiagram(axes,ranges,neighbors,label) {
+    const map=el('div',undefined,'block-diagram');
+    map.dataset.rank=String(axes.length);
+    map.setAttribute('role','img');map.setAttribute('aria-label',label);
+    const domains=axes.map((axis,index)=>{
+      const {start,end}=ranges[index];
+      const step=axis.program_steps.filter(Boolean);
+      const regular=step.length===1&&step[0]===axis.length&&axis.start===0;
+      const next=end+axis.length;
+      const siblingRanges=neighbors.map(item=>item[index]);
+      const low=Math.min(0,start,...siblingRanges.map(item=>item.start));
+      const high=Math.max(end,axis.limit??0,...siblingRanges.map(item=>item.end),
+        regular&&axis.limit===undefined&&Number.isSafeInteger(next)?next:end);
+      const guides=new Set(siblingRanges.flatMap(item=>[item.start,item.end]));
+      if(regular&&high/axis.length<=16){
+        for(let mark=axis.length;mark<high;mark+=axis.length)guides.add(mark);
+      }
+      return {low,high,guides,limit:axis.limit};
+    });
+    const percent=(coord,domain)=>(coord-domain.low)/(domain.high-domain.low)*100;
+    domains.forEach((domain,index)=>{
+      const dimension=axes.length===2&&index===0?'row':'col';
+      const guide=(mark,className)=>{
+        if(mark<=domain.low||mark>=domain.high)return;
+        const line=el('span',undefined,`block-guide ${dimension} ${className}`);
+        line.style.setProperty('--position',`${percent(mark,domain)}%`);map.append(line);
+      };
+      for(const mark of domain.guides)guide(mark,'');
+      if(domain.limit!==undefined)guide(domain.limit,'block-limit');
+    });
+    const tile=(ends,className)=>{
+      if(ends.some((end,i)=>end<=ranges[i].start))return;
+      const rect=el('span',undefined,className);
+      const last=axes.length-1;
+      rect.style.left=`${percent(ranges[last].start,domains[last])}%`;
+      rect.style.width=`${percent(ends[last],domains[last])-percent(ranges[last].start,domains[last])}%`;
+      if(axes.length===2){
+        rect.style.top=`${percent(ranges[0].start,domains[0])}%`;
+        rect.style.height=`${percent(ends[0],domains[0])-percent(ranges[0].start,domains[0])}%`;
+      }
+      map.append(rect);
+    };
+    tile(ranges.map((range,index)=>Math.min(range.end,axes[index].limit??range.end)),'block-highlight');
+    tile(ranges.map(range=>range.end),'block-outline');
+    return map;
+  }
+  function blockPlacement(node,nodes) {
+    const blocks=state.analysis.read_blocks??[];
+    const matches=blocks.filter(block=>block.related_nodes.includes(node.id));
+    if(!matches.length)return null;
+    const block=matches.find(candidate=>candidate.node_id===blockSelections.get(node.id))??matches[0];
+    const supplied=state.program_ids??[];
+    const programAxes=[...new Set(block.axes.flatMap(axis=>axis.program_steps.flatMap((step,index)=>step?[index]:[])))];
+    const programIds=Array.from({length:Math.max(-1,...programAxes)+1},(_,index)=>supplied[index]??0);
+    const ranges=block.axes.map(axis=>blockRange(axis,programIds));
+    if(ranges.some(range=>!range))return null;
+    const lookup=new Map(nodes.map(item=>[item.id,item]));
+    const load=lookup.get(block.node_id);
+    const {start_line,start_col}=load.source;
+    const otherIterations=blocks.filter(item=>{
+      const source=lookup.get(item.node_id)?.source;
+      return item!==block&&item.pointer===block.pointer&&item.axes.length===block.axes.length&&
+        source?.start_line===start_line&&source.start_col===start_col;
+    }).map(item=>item.axes.map(axis=>blockRange(axis,programIds))).filter(axes=>axes.every(Boolean));
+
+    const panel=el('section',undefined,'block-placement');
+    const header=el('div',undefined,'block-header');
+    const name=item=>[item.pointer,loopText(lookup.get(item.node_id)),`第 ${lookup.get(item.node_id).source.start_line} 行`].filter(Boolean).join(' · ');
+    header.append(el('h2','分块位置'));
+    if(matches.length>1){
+      const select=el('select',undefined,'block-access');
+      select.dataset.ownerNode=node.id;select.setAttribute('aria-label','关联读取');
+      for(const item of matches){
+        const option=el('option',name(item));
+        option.value=item.node_id;option.selected=item===block;select.append(option);
+      }
+      select.addEventListener('change',()=>{blockSelections.set(node.id,select.value);render();});
+      header.append(select);
+    }else header.append(el('code',name(block),'muted'));
+    if(programAxes.length){
+      const example=programAxes.some(axis=>supplied[axis]===undefined);
+      header.append(el('code',`${example?'示例 ':''}program ${coordText(programIds)}`,'muted'));
+    }
+    panel.append(header);
+    const axisNames=ranges.length===1?['索引']:['行','列'];
+    const label=[`${block.pointer} 当前读取块`,...axisNames.map((name,index)=>`${name} ${blockInterval(ranges[index])}`)].join(' · ');
+    const content=el('div',undefined,'block-content');
+    const details=el('div',undefined,'block-ranges');
+    block.axes.forEach((axis,index)=>{
+      const line=el('div',undefined,'block-axis');
+      line.title=`地址步长 ${axis.stride} 个元素`;
+      line.append(el('strong',axisNames[index]),el('code',blockInterval(ranges[index])),
+        el('code',blockFormula(axis,index===0?'i':'j'),'muted'));
+      if(axis.limit!==undefined)line.append(el('span',`掩码 < ${axis.limit}`,'muted'));
+      details.append(line);
+    });
+    content.append(blockDiagram(block.axes,ranges,otherIterations,label),details);
+    panel.append(content);
+    let coordinate;
+    if(outputIndex){
+      const indexed=block.axes.flatMap((axis,index)=>axis.arange_node===node.id?[index]:[]);
+      if(node.id===block.node_id){
+        const coordinates=ranges.map((range,index)=>range.start+outputIndex[index]);
+        coordinate=el('p',`块内 ${coordText(outputIndex)} → ${block.pointer} ${coordText(coordinates)}`,'block-coordinate');
+      }else if(indexed.length===1){
+        const axis=indexed[0];
+        coordinate=el('p',`块内 ${coordText(outputIndex)} → ${block.pointer} ${axisNames[axis]} ${ranges[axis].start+outputIndex[0]}`,'block-coordinate');
+      }
+    }
+    return {panel,coordinate};
+  }
+  function gridViewControls() {
+    const controls=el('div',undefined,'grid-view');
+    controls.setAttribute('role','group');
+    controls.setAttribute('aria-label','网格视图');
+    for(const [mode,name] of [['simple','简约'],['normal','普通']]){
+      const compact=mode==='simple';
+      const option=button(name,()=>{
+        if(simpleMode===compact)return;
+        simpleMode=compact;
+        pendingInspection=null;inspection=null;outputIndex=null;
+        render();
+      });
+      option.dataset.gridView=mode;
+      option.setAttribute('aria-pressed',String(simpleMode===compact));
+      if(compact)option.title='最多显示 4 行 × 4 列真实坐标。可调整行列起点移动窗口。';
+      controls.append(option);
+    }
+    return controls;
   }
   function operationView(node,nodes) {
     const workspace=el('section',undefined,'workbench');
@@ -544,6 +684,8 @@
     const loop=loopText(node);if(loop)metadata.append(el('span',loop,'muted'));
     metadata.append(button(`查看源码 · 第 ${node.source.start_line} 行`,()=>post('revealSource',{node_id:node.id}),'source-link'));
     header.append(expression,metadata);workspace.append(header);
+    const block=blockPlacement(node,nodes);if(block)workspace.append(block.panel);
+    workspace.append(gridViewControls());
 
     const hidden=new Set(state.show_all?[]:contextInputs(node,nodes).map(input=>input.id));
     const dataInputs=node.inputs.map(id=>nodes.find(item=>item.id===id)).filter(input=>input&&!hidden.has(input.id));
@@ -551,11 +693,17 @@
     flow.setAttribute('role','group');
     flow.setAttribute('aria-label',`输入经过 ${node.op} 得到输出`);
     const output=el('section',undefined,'flow-output');output.append(tensorCard(node,true));
-    const inputs=section('直接来源');inputs.classList.add('flow-inputs');
-    inputs.append(mapping(dataInputs.length>0||hidden.size>0));
-    dataInputs.forEach((input,index)=>inputs.append(tensorCard(input,false,index)));
-    if(!dataInputs.length&&hidden.size)inputs.append(el('p','标量输入列在参数与属性中。','muted'));
-    flow.append(output,inputs);workspace.append(flow);
+    flow.append(output);
+    if(dataInputs.length){
+      const inputs=el('section',undefined,'flow-inputs');inputs.setAttribute('aria-label','来源网格');
+      dataInputs.forEach((input,index)=>inputs.append(tensorCard(input,false,index)));
+      flow.append(inputs);
+    }
+    const sources=section('直接来源');sources.classList.add('mapping-panel');
+    if(block?.coordinate)sources.append(block.coordinate);
+    sources.append(mapping(dataInputs.length>0||hidden.size>0));
+    if(!dataInputs.length&&hidden.size)sources.append(el('p','标量输入列在参数与属性中。','muted'));
+    workspace.append(flow,sources);
     const details=operationDetails(node,nodes);if(details)workspace.append(details);
     return workspace;
   }
@@ -602,7 +750,7 @@
     if(message.type==='state'){
       const next=message.state;
       const followStep=!next.stale&&(next.selected!==state.selected||next.file!==state.file||next.show_all!==state.show_all);
-      if(next.file!==state.file||next.generation!==state.generation||next.version!==state.version){slices.clear();simpleSlices.clear();}
+      if(next.file!==state.file||next.generation!==state.generation||next.version!==state.version){slices.clear();simpleSlices.clear();blockSelections.clear();}
       if(next.stale||next.show_all!==state.show_all||next.file!==state.file||next.selected!==state.selected||next.generation!==state.generation||next.version!==state.version){inspection=null;outputIndex=null;pendingInspection=null;}
       state=next;render(followStep);
     } else if(message.type==='inspection'&&!state.stale){

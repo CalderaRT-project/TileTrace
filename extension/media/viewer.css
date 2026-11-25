@@ -78,7 +78,7 @@ summary { cursor: pointer; }
 }
 .file-name { max-width: 100%; }
 .kernel-name { color: var(--muted); font-size: 12px; }
-.panel-actions, .kernel-select, .display-mode, .visibility-control {
+.panel-actions, .kernel-select, .visibility-control {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -86,9 +86,8 @@ summary { cursor: pointer; }
 }
 .panel-actions { flex-wrap: wrap; gap: 6px 10px; }
 .kernel-select select { min-width: 0; max-width: 100%; }
-.display-mode, .visibility-control { font-size: 12px; }
-.display-mode input, .visibility-control input { margin: 0; }
-.display-mode { white-space: nowrap; }
+.visibility-control { font-size: 12px; }
+.visibility-control input { margin: 0; }
 .status { color: var(--muted); font-size: 12px; }
 
 .workspace { min-width: 0; }
@@ -223,6 +222,79 @@ summary { cursor: pointer; }
 }
 .source-link:hover { background: var(--vscode-list-hoverBackground, var(--surface)); }
 
+.block-placement {
+  margin-bottom: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.block-header, .block-axis {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.block-access { max-width: 100%; padding: 1px 4px; font-size: 12px; }
+.block-content {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  margin-top: 5px;
+}
+.block-diagram {
+  position: relative;
+  flex: 0 0 112px;
+  max-width: 100%;
+  height: 49px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--vscode-editor-background);
+}
+.block-diagram[data-rank="1"] { height: 26px; }
+.block-guide, .block-highlight, .block-outline { position: absolute; }
+.block-guide.row { inset: var(--position) 0 auto; border-top: 1px solid var(--line); }
+.block-guide.col { inset: 0 auto 0 var(--position); border-left: 1px solid var(--line); }
+.block-guide.block-limit { z-index: 1; border-color: var(--muted); }
+.block-guide.row.block-limit { border-top-style: dashed; }
+.block-guide.col.block-limit { border-left-style: dashed; }
+.block-highlight, .block-outline { top: 0; height: 100%; }
+.block-highlight {
+  border: 1px solid var(--link);
+  background: color-mix(in srgb, var(--link) 24%, transparent);
+}
+.block-outline { border: 1px dashed var(--link); }
+.block-ranges { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.block-axis, .block-coordinate { font-size: 12px; }
+.block-coordinate { margin-bottom: 4px; color: var(--link); font-family: var(--mono); }
+
+.grid-view {
+  display: flex;
+  gap: 2px;
+  width: fit-content;
+  margin-bottom: 8px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+}
+.grid-view button {
+  min-inline-size: 44px;
+  padding: 2px 8px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-size: 12px;
+}
+.grid-view button:hover { background: var(--vscode-list-hoverBackground, var(--surface)); }
+.grid-view button[aria-pressed="true"] {
+  background: var(--selection, var(--vscode-button-secondaryBackground));
+  color: var(--selection-text, var(--vscode-foreground));
+  font-weight: 600;
+}
+
 .flow {
   display: flex;
   align-items: flex-start;
@@ -238,9 +310,7 @@ summary { cursor: pointer; }
   max-width: 100%;
   min-width: 0;
 }
-.flow-inputs > h2 { margin-bottom: 4px; }
-.flow-inputs > .tensor-card { margin-top: 7px; }
-.flow-inputs > .muted { margin-top: 5px; }
+.flow-inputs > .tensor-card + .tensor-card { margin-top: 7px; }
 .tensor-card {
   width: fit-content;
   min-width: 0;
@@ -277,7 +347,9 @@ summary { cursor: pointer; }
 .slice-controls button, .slice-control { font-size: 11px; }
 .slice-control { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .slice-control input { width: 72px; max-width: 100%; }
+.simple-window .slice-control input { width: 48px; }
 .grid-scroll { max-width: 100%; overflow: auto; margin-top: 4px; }
+.flow[data-layout="horizontal"] .grid-scroll { margin-top: calc(4px + var(--grid-offset, 0px)); }
 .index-grid {
   border-spacing: 2px;
   font: 11px var(--mono);
@@ -288,6 +360,7 @@ summary { cursor: pointer; }
   font-weight: 400;
   white-space: nowrap;
 }
+.index-grid thead th { height: 24px; }
 .index-grid td { padding: 0; }
 .cell {
   min-width: 29px;
@@ -307,24 +380,33 @@ summary { cursor: pointer; }
   background: var(--origin-fill);
   color: var(--vscode-foreground);
 }
-.matrix-cell { min-width: 23px; padding-inline: 2px; }
-.matrix-cell[data-output] { min-width: 28px; }
-.matrix-cell .cell-coordinate { display: none; }
+.matrix-cell { position: relative; width: 100%; min-width: 28px; padding-inline: 2px; }
+.matrix-cell .cell-coordinate { visibility: hidden; }
 .matrix-cell.selected-cell .cell-coordinate,
-.matrix-cell:focus-visible .cell-coordinate { display: inline; }
-.matrix-cell.origin::after { content: '•'; color: var(--origin); }
-.group-cell { border-style: dashed; }
+.matrix-cell:focus-visible .cell-coordinate { visibility: visible; }
+.matrix-cell.origin::after {
+  content: '•';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--origin);
+}
 .axis-ellipsis {
   min-width: 24px;
   padding: 1px 3px;
+  vertical-align: middle;
   color: var(--muted);
   background: transparent;
   border: 1px dashed var(--line);
 }
 
+.mapping-panel { margin-top: 10px; }
+.mapping-panel > h2 { margin-bottom: 4px; }
+.mapping-panel > .muted { margin-top: 5px; }
 .mapping {
   width: max-content;
-  max-width: min(18rem, 100cqi);
+  max-width: min(32rem, 100%);
   overflow-wrap: anywhere;
 }
 .mapping-current { font: 12px var(--mono); color: var(--link); }

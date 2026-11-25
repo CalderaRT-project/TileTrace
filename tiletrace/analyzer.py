@@ -10,6 +10,8 @@ import itertools
 import math
 import operator
 
+from .block_layout import infer_read_blocks
+
 
 _UNKNOWN = object()
 _BINARY = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -150,6 +152,8 @@ class _Analyzer:
         self.program_ids = []
         self.loops = []
         self.loop_budget = 16
+        self.mask_nodes = {}
+        self.read_masks = {}
 
     def range(self, expr):
         def col(line, offset):
@@ -287,7 +291,12 @@ class _Analyzer:
             inputs = [self.expr(expr.left), self.expr(expr.right)]
             if type(expr.op) not in _BINARY:
                 return self.unsupported(expr, 'Unsupported arithmetic operator.', inputs)
-            return self.scalar_operation(expr, inputs, _BINARY[type(expr.op)])
+            node = self.scalar_operation(expr, inputs, _BINARY[type(expr.op)])
+            if isinstance(expr.op, ast.BitAnd):
+                bounds = tuple(bound for item in inputs for bound in self.mask_nodes.get(item['id'], ()))
+                if bounds:
+                    self.mask_nodes[node['id']] = bounds
+            return node
         if isinstance(expr, ast.UnaryOp):
             inputs = [self.expr(expr.operand)]
             operations = {ast.UAdd: operator.pos, ast.USub: operator.neg,
@@ -301,7 +310,10 @@ class _Analyzer:
                 return self.unsupported(expr, 'Unsupported comparison operator.', inputs)
             def compare(*values):
                 return all(_COMPARE[type(op)](values[i], values[i + 1]) for i, op in enumerate(expr.ops))
-            return self.scalar_operation(expr, inputs, compare)
+            node = self.scalar_operation(expr, inputs, compare)
+            if bounds := self.mask_bounds(expr):
+                self.mask_nodes[node['id']] = bounds
+            return node
         if isinstance(expr, ast.BoolOp):
             inputs = [self.expr(e) for e in expr.values]
             def operation(*values):
@@ -599,7 +611,13 @@ class _Analyzer:
             if not args and 'pointer' not in keywords:
                 raise ValueError('load requires a pointer expression.')
             n = self.expr(args[0] if args else keywords['pointer'])
-            return self.node(expr, name, [n], n['shape'], {'mapping': 'identity', 'meaning': 'Pointer-expression shape; global memory addresses are not modeled.'})
+            node = self.node(expr, name, [n], n['shape'], {'mapping': 'identity', 'meaning': 'Pointer-expression shape; global memory addresses are not modeled.'})
+            mask = keywords.get('mask')
+            if len(args) > 1:
+                mask = args[1] if 'mask' not in keywords else None
+            if bounds := self.mask_bounds(mask):
+                self.read_masks[node['id']] = bounds
+            return node
         if name == 'store':
             self.diagnostic('tl.store is ignored; this tool analyzes expression shapes, not memory writes.', expr, 'info')
             return self.node(expr, name, attrs={'ignored': True})
@@ -612,11 +630,47 @@ class _Analyzer:
         inputs = [self.expr(a) for a in args]
         return self.unsupported(expr, 'Unsupported call: ' + path, inputs)
 
+    def mask_bounds(self, expr):
+        if isinstance(expr, ast.Name):
+            node = self.env.get(expr.id)
+            return self.mask_nodes.get(node['id'], ()) if node else ()
+        if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.BitAnd):
+            return self.mask_bounds(expr.left) + self.mask_bounds(expr.right)
+        if not isinstance(expr, ast.Compare) or len(expr.ops) != 1 or not isinstance(expr.ops[0], ast.Lt):
+            return ()
+        left, right = expr.left, expr.comparators[0]
+        bound = right.value if isinstance(right, ast.Constant) else _UNKNOWN
+        if isinstance(right, ast.Name) and (source := self.env.get(right.id)) and not source['shape']:
+            bound = self.value(source)
+        if not _integer(bound):
+            return ()
+
+        axis = -1  # A vector mask broadcasts along the last axis.
+        if isinstance(left, ast.Subscript) and isinstance(left.slice, ast.Tuple):
+            parts = left.slice.elts
+            full = [i for i, part in enumerate(parts) if isinstance(part, ast.Slice)
+                    and part.lower is None and part.upper is None and part.step is None]
+            if len(parts) != 2 or len(full) != 1:
+                return ()
+            other = parts[1 - full[0]]
+            if not isinstance(other, ast.Constant) or other.value is not None:
+                return ()
+            axis, left = full[0], left.value
+        node = self.env.get(left.id) if isinstance(left, ast.Name) else None
+        if node and len(node['shape']) == 1:
+            return ((node['id'], axis, bound),)
+        if node and axis == -1 and node['op'] == 'expand_dims' and node['attrs'].get('axes') in ([0], [1]):
+            return ((node['inputs'][0], 1 - node['attrs']['axes'][0], bound),)
+        return ()
+
     def assign(self, target, node):
         if isinstance(target, ast.Name):
             # An alias is a new expression output; preserve the previous label.
             if any(n is node for n in self.env.values()):
+                previous = node['id']
                 node = self.node(target, 'alias', [node], node['shape'], {'mapping': 'identity', **({'value': self.value(node)} if self.value(node) is not _UNKNOWN else {})})
+                if previous in self.mask_nodes:
+                    self.mask_nodes[node['id']] = self.mask_nodes[previous]
             node['name'] = target.id
             self.env[target.id] = node
             self.aliases.pop(target.id, None)
@@ -753,7 +807,7 @@ def analyze(source: str, kernel: str | None = None, parameters: dict | None = No
             document_id: str = '', version: int = 0) -> dict:
     """Parse a kernel and derive conservative logical tensor shapes."""
     result = {'document_id': document_id, 'version': version, 'kernel': None,
-              'kernels': [], 'nodes': [], 'diagnostics': [], 'missing_parameters': [], 'parameters': {}}
+              'kernels': [], 'nodes': [], 'diagnostics': [], 'missing_parameters': [], 'parameters': {}, 'read_blocks': []}
     if not isinstance(source, str):
         result['diagnostics'].append({'severity': 'error', 'message': 'Source must be a string.'})
         return result
@@ -835,6 +889,8 @@ def analyze(source: str, kernel: str | None = None, parameters: dict | None = No
         engine.statements(selected.body)
     except RecursionError:
         engine.diagnostic('Source nesting exceeds static-analysis limits.', severity='error')
+    else:
+        result['read_blocks'] = infer_read_blocks(result['nodes'], engine.read_masks)
     return result
 
 
