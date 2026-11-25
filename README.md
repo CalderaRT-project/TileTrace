@@ -1,78 +1,73 @@
-# TileTrace
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="extension/media/icons/tiletrace-dark.svg">
+    <img src="extension/media/icons/tiletrace-light.svg" alt="" width="40" height="40" align="middle">
+  </picture>
+  TileTrace
+</h1>
 
-TileTrace 是 VS Code 的 Triton 张量变换可视化扩展。打开 Triton 脚本，选中表达式，在编辑器右侧查看形状变化与元素来源。
+<p align="center">在 VS Code 里选中 Triton 表达式，查看张量形状，再点一个输出格，看看哪些输入参与了计算。</p>
+<p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
-分析器不执行脚本、不导入 Triton、不启动 kernel；使用 Python 3.10+，无需 GPU。采用 [MIT 许可证](LICENSE)。
+![点积的坐标来源。q 的行索引 1 和 k_transposed 的列索引 2 共同决定输出格 [1, 2]。](docs/images/dot-trace.svg)
 
-> 当前版本为 0.1.5，支持本地 VSIX 安装。[更新日志](docs/CHANGELOG.md)
-
-## 当前功能
-
-- `arange`、新增轴、广播、reshape、transpose、sum/max、二维 `tl.dot`、显式类型转换，以及常见逐元素操作的静态形状分析。
-- 点击输出坐标，查看参与该位置计算的直接输入坐标；大归约限定展示数量。
-- 查看常见 `tl.load` 的逻辑分块位置，追踪 `arange` 的块内索引如何加上 program 或循环偏移。
-- 支持符号尺寸和缺失参数提示，未知语法提供诊断。
-- VS Code 读取未保存缓冲区、跟随选择和参数变化、反向定位源码。
-- 默认只显示关键张量步骤，参数与常量折叠到操作详情；“显示全部节点”可以查看完整分析图。标量归约及依赖归约结果的计算仍然保留。
-
-展示的是逻辑坐标与依赖。它不表示实际数值执行、GPU 线程布局、内存搬运或性能测量。只展开已知整数边界的 `tl.static_range`，一次分析共享最多 16 次循环迭代；未知/超限循环、循环控制跳转、数据相关分支与跨函数调用仍保留诊断。FlashAttention 示例是单 batch/head 的教学前向实现，尚未在本机验证 GPU 数值或性能。
+在 `tl.dot(q, k_transposed)` 的输出网格里，点选 `[1, 2]` 会高亮 `q[1, :]` 和 `k_transposed[:, 2]`。两个输入各贡献 32 个坐标，图中展示每个张量左上角的 4 × 4 窗口。
 
 ## 安装与快速开始
 
-运行扩展需要 Python 3.10+。从源码构建还需要 Node.js 与 npm。在仓库根目录运行以下命令生成 VSIX。
+运行扩展需要 **VS Code 1.85+** 和 **Python 3.10+**。VSIX 自带静态分析器，用 Python 标准库解析源码，无需 GPU、Triton 或 NumPy。
+
+从源码安装时，先在仓库根目录用 Node.js 和 npm 生成安装包。
 
 ```sh
 npm --prefix extension ci
 npm --prefix extension run package
 ```
 
-Windows PowerShell 也可以运行 `.\scripts\setup.ps1` 生成 VSIX。构建完成后，在 VS Code 扩展面板的菜单中选择 **Install from VSIX…**，安装 `dist/tiletrace-0.1.5.vsix`。
+Windows 上也可以在仓库根目录运行 PowerShell 脚本 [scripts/setup.ps1](scripts/setup.ps1)。
 
-安装后，在受信任的工作区打开包含 `@triton.jit` kernel 的已保存 `.py` 文件。点击编辑器右上角的 **TileTrace 矩阵图标**，或运行命令 **TileTrace: 打开变换可视化**。选中源码表达式可查看输入和输出形状，点击输出坐标可查看直接输入来源。
+1. 在 VS Code 扩展视图的 **…** 菜单中选择 **Install from VSIX…**，安装 `dist/tiletrace-0.1.5.vsix`。
+2. 将项目文件夹作为受信任的工作区打开，再打开一个已保存、包含 `@triton.jit` kernel 的 `.py` 文件。可以直接使用仓库里的 [FlashAttention 示例](examples/flash_attention.py)。
+3. 点击编辑器右上角的 **TileTrace 矩阵图标**，或在命令面板运行 **TileTrace: 打开变换可视化**。右侧面板会跟随源码选择，也会分析尚未保存的编辑。
 
-扩展自带静态分析 worker，无需安装 Triton、NumPy 或使用 GPU。Python 路径未自动识别时，在设置中配置 `tiletrace.pythonPath`。
+扩展会先在工作区的 `.venv`、再在 `PATH` 中查找 Python。若要指定解释器，可将 `tiletrace.pythonPath` 设为可执行文件的绝对路径。运行 **TileTrace: 重启分析进程** 可以重启本地分析器。
 
-面板由用户手动打开，打开后会跟随当前源码更新。面板标签也使用 TileTrace 矩阵图标。运行 **TileTrace: 重启分析进程** 可重新启动本地分析。
+## 跟踪 FlashAttention 的一次 Q 读取
 
-## FlashAttention 示例与交互
+示例演示单个 batch、单个 head 的前向计算。默认序列长度为 64，head 维度为 32，每个 program 处理 16 行 Q。打开示例即可使用这些默认值。
 
-下载或克隆本仓库，打开 [examples/flash_attention.py](examples/flash_attention.py) 即可体验完整示例。
+1. 在 `q = tl.load(...)` 中选中 `tl.load`。**分块位置** 显示 program `[0]` 读取 Q 的行区间 `[0, 16)`。选中构造行索引的 `tl.arange(0, BLOCK_M)` 也能找到同一读取块。
+2. 展开 **分析参数 · JSON**，在 **program ID（可选）** 中填入 `[1]`，点击 **应用参数并重新分析**。现在读取的是 Q 的行 `[16, 32)`、列 `[0, 32)`。
+3. 回到 `tl.load` 的输出网格，点选 `[1, 2]`。**直接来源** 显示 `块内 [1, 2] → Q [17, 2]`。块的起始行是 16，加上块内行索引 1，就得到了 Q 中的行索引 17。
 
-示例只保留一个 `flash_attention_forward`，默认参数无需填写 JSON。每个 program 处理 16 个 Q 行，每次循环读取 32 个 K/V 行，head 维度为 32，序列长度为 64。`program_ids` 填 `[1]` 可切换到第二块 Q 行；`{"CAUSAL":false}` 可关闭因果掩码。
+![VS Code 中选中了读取 Q 的 tl.load。TileTrace 面板显示 program [1] 的读取范围，以及块内 [1, 2] 对应的 Q 坐标 [17, 2]。](docs/images/flash-attention-q.png)
 
-依次查看行列 `arange`、新增轴、`q`/`k`/`v`、K 转置、`scores`、softmax 的归约与广播、`accumulator`、`output`。点击矩阵乘法输出坐标可查看左右输入的整行/整列；循环内操作标注 `start_n=0` 或 `start_n=32`。示例使用在线 softmax，逐块更新结果，无需构建整个注意力矩阵。
+接着选中 `tl.dot(q, k_transposed)` 并点击输出格 `[1, 2]`，就能重现页首的行列高亮。步骤列表用 `start_n=0` 和 `start_n=32` 区分两次循环。每次读取 32 行 K/V，在线 softmax 逐块更新行最大值、归一化分母和输出累加器。要查看关闭因果掩码的分支，可在 constexpr 参数中填入 `{"CAUSAL": false}`。
 
-选中 `tl.arange(0, BLOCK_M)` 可看到它关联的 Q 读取块。「分块位置」显示行偏移公式、当前行列区间和可识别的掩码上界。示例 program `[0]` 的 Q 行是 `[0, 16)`，在分析参数中把 `program_ids` 改为 `[1]` 可查看 `[16, 32)`。K/V 按 `start_n` 展示两个循环读取块。分块图覆盖可以静态确认的线性偏移与行列步长。
+## 面板速查
 
-默认只展示张量步骤，常量与参数折叠到操作详情。选中 `arange` 时展示起点、终点和长度；源码中的边界常量或归约轴会选中所属张量操作。前后导航遵循当前视图。
+| 想查看什么 | 怎么看 |
+| --- | --- |
+| 每一步的形状 | 选中 `arange`、新增轴、广播、reshape、转置、显式类型转换或逐元素操作，对照输入和输出卡片。一维索引的显示方向取决于 `[:, None]` 或 `[None, :]` 的用法。 |
+| 归约与点积的输入 | 点击 `tl.sum`、`tl.max` 或二维 `tl.dot` 的输出格。**坐标明细** 显示已返回数量、总数和截断情况，**定位首个来源坐标** 可将输入网格移到对应位置。 |
+| 窗口以外的坐标 | **简约** 默认最多显示 4 行 × 4 列，可调整行列起点。**普通** 将长度超过 8 的轴折叠为首尾各 3 项，点击省略号可展开，每卡最多显示 128 格。高维张量可用前缀轴选择切片。 |
+| 步骤对应的源码 | 默认列出关键张量步骤，参数与常量收在 **参数与属性** 中。勾选 **显示全部节点** 可浏览完整列表，点击 **查看源码** 可跳回表达式。 |
 
-一维张量的行列方向根据实际新增轴用法展示：`query_rows[:, None]` 对应行轴，因此 `query_rows` 的 16 个索引纵向排列；`head_cols[None, :]` 对应列轴，横向排列。真实 shape 仍是 `[16]` 或 `[32]`。同一向量用于两个方向时，查看具体新增轴操作可获得相应方向；单独查看时会提示方向未指定。矩阵卡片同时说明完整行列数与网格显示窗口，避免将只显示的 8 行误读成整个 program 的行数。
+## 分析范围
 
-普通视图中，超过 8 个坐标的轴默认显示前 3 项、`…`、后 3 项，例如 16 行显示为 `0、1、2、…、13、14、15`。点击省略号或“展开显示窗口”查看中间坐标，每卡最多显示 128 个格子。“定位首个来源坐标”会将输入窗口移到对应位置。来源文本只展示返回坐标的首尾各 3 项，并保留枚举截断说明。
+TileTrace 推导逻辑形状和坐标依赖。能从 `tl.load` 的指针表达式推导出线性偏移与步长时，面板还会标出读取范围及可识别的掩码上界。张量数值、GPU 线程布局、实际访存与耗时属于运行时分析的范畴。
 
-面板默认打开“简约”视图。每张卡片直接显示最多 4 行 × 4 列真实坐标，较短的轴按实际长度显示。点击输出格即可查询来源，通过“行起点”“列起点”移动窗口。高维张量用前缀轴选择切片，卡片显示完整 shape。用网格上方的“简约 / 普通”切换视图，两种视图各自记住窗口位置。
+若形状取决于缺少的参数，面板会提示需要补充的值。constexpr / 标量参数与可选的 `input_shapes` 接受 JSON 对象，`program_ids` 接受坐标数组。分析器可展开整数边界已知的 `tl.static_range`，一次分析中的所有循环共用 16 次迭代额度。无法展开的循环、循环内的控制跳转、依赖运行时数据的分支和跨函数调用会给出诊断。
 
-面板优先显示当前操作和输出网格。点击输出格后，网格下方的直接来源区域显示对应输入、坐标范围和可见高亮数量。输出和来源空间充足时并排展示，窄面板默认将步骤收起，宽面板使用按迭代分组的步骤侧栏。矩阵行列数与显示数量可通过 shape 和网格的悬停提示查看。
+## 开发与参考
 
-同一文件中点击格子、切换步骤或收到分析结果时，会保留页面、列表和网格的滚动位置，以及参数区展开状态和输入焦点。重新分析时暂时缩短的等待页面不会覆盖原阅读位置；首次切换到另一文件从顶部开始。内容变短时，浏览器会将位置限制在新的可滚动范围内。
-
-输入参数与 `input_shapes` 是 JSON 对象；program IDs 是坐标数组。形状未知时先补充缺失参数。源文件仅被静态读取，不能通过修改示例参数取得执行数值。
-
-## 开发与测试
-
-在仓库根目录运行以下命令检查分析器、编辑器控制逻辑和面板交互。Python 测试使用 Python 3.10+，VSIX 构建后还会检查打包内容和分析进程的隔离启动。
+在仓库根目录运行分析器和扩展测试。生成 VSIX 后，Python 测试也会检查包内文件和分析进程的隔离启动。
 
 ```sh
 python -m unittest discover -s tests -v
 npm --prefix extension test
 ```
 
-[VS Code 扩展开发与打包说明](extension/README.md)
+[扩展开发与打包](extension/README.md) · [更新日志](docs/CHANGELOG.md) · [MIT 许可证](LICENSE)
 
-## 来源
-
-分析规则依据 [Triton 官方 API](https://triton-lang.org/main/python-api/triton.language.html)，编辑器接入依据 [VS Code Webview API](https://code.visualstudio.com/api/extension-guides/webview)。[TileLens](https://github.com/Deep-Learning-Profiling-Tools/tilelens) 用于功能覆盖比较；本项目没有复制其代码或界面。
-
-## 许可证
-
-[MIT](LICENSE)
+分析规则参考 [Triton 语言 API](https://triton-lang.org/main/python-api/triton.language.html)，编辑器面板使用 [VS Code Webview API](https://code.visualstudio.com/api/extension-guides/webview)。功能覆盖对照参考了 [TileLens](https://github.com/Deep-Learning-Profiling-Tools/tilelens)。
