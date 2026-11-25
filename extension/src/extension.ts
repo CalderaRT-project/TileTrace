@@ -58,13 +58,14 @@ class Controller implements vscode.Disposable {
   }
   private createPanel():void {
     if(this.panel)return;
-    this.panel=vscode.window.createWebviewPanel('tiletrace','TileTrace · 变换',vscode.ViewColumn.Beside,{enableScripts:true,retainContextWhenHidden:true,localResourceRoots:[vscode.Uri.joinPath(this.context.extensionUri,'media')]});
+    const title='TileTrace';
+    this.panel=vscode.window.createWebviewPanel('tiletrace',title,vscode.ViewColumn.Beside,{enableScripts:true,retainContextWhenHidden:true,localResourceRoots:[vscode.Uri.joinPath(this.context.extensionUri,'media')]});
     this.panel.iconPath={light:vscode.Uri.joinPath(this.context.extensionUri,'media','icons','tiletrace-light.svg'),dark:vscode.Uri.joinPath(this.context.extensionUri,'media','icons','tiletrace-dark.svg')};
     const nonce=randomBytes(18).toString('base64');const webview=this.panel.webview;
     const css=webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','viewer.css'));
     const js=webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','viewer.js'));
     const operations=webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','operations.js'));
-    webview.html=`<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${css}"><title>TileTrace 变换</title></head><body><main id="app"></main><script nonce="${nonce}" src="${operations}"></script><script nonce="${nonce}" src="${js}"></script></body></html>`;
+    webview.html=`<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${css}"><title>${title}</title></head><body><main id="app"></main><script nonce="${nonce}" src="${operations}"></script><script nonce="${nonce}" src="${js}"></script></body></html>`;
     this.panel.onDidDispose(()=>{this.panel=undefined;this.detach('面板已关闭。');},null,this.context.subscriptions);
     this.panel.webview.onDidReceiveMessage(message=>{void this.message(message).catch(error=>this.fail(error));},null,this.context.subscriptions);
   }
